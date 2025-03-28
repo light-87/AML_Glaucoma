@@ -438,6 +438,13 @@ if __name__ == "__main__":
     
     print(f"Model output shape: {output.shape}")
 
+def dice_coefficient(y_pred, y_true, smooth=1.0):
+    """
+    Calculate Dice coefficient.
+    
+    Parameters:
+    -----------
+    y_pred : torch.Tensor
         Predicted masks
     y_true : torch.Tensor
         Ground truth masks
@@ -485,3 +492,20 @@ def combined_loss(y_pred, y_true, alpha=0.5, smooth=1.0):
     Parameters:
     -----------
     y_pred : torch.Tensor
+        Predicted masks
+    y_true : torch.Tensor
+        Ground truth masks
+    alpha : float, optional
+        Weight for BCE loss, by default 0.5
+    smooth : float, optional
+        Smoothing factor for Dice loss, by default 1.0
+        
+    Returns:
+    --------
+    torch.Tensor
+        Combined loss
+    """
+    bce = F.binary_cross_entropy(y_pred, y_true)
+    dice = dice_loss(y_pred, y_true, smooth)
+    
+    return alpha * bce + (1 - alpha) * dice

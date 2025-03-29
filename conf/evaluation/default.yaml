@@ -1,0 +1,10 @@
+# Evaluation configuration
+metrics: [dice, iou, accuracy, precision, recall, f1]
+threshold: 0.5
+num_samples: 5  # Number of sample visualizations
+
+# Visualizations
+visualization:
+  enabled: true
+  plot_wrong_predictions: true
+  plot_gradcam: true

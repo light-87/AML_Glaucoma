@@ -116,6 +116,7 @@ def test_model_run(data_path, output_dir, epochs=2, batch_size=8):
     create_directory(checkpoint_dir)
     
     # Configure training with reduced settings for testing
+    # Update the training_config dict in your test_model_run function
     training_config = {
         'epochs': epochs,
         'batch_size': batch_size,
@@ -126,7 +127,9 @@ def test_model_run(data_path, output_dir, epochs=2, batch_size=8):
             'enabled': False
         },
         'early_stopping': {
-            'enabled': False
+            'enabled': False,
+            'patience': 10,  # Add this line
+            'min_delta': 0.001  # Also add this parameter
         },
         'checkpointing': {
             'enabled': True,

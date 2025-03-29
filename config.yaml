@@ -1,0 +1,23 @@
+# @package _global_
+defaults:
+  - data: default
+  - model: unet
+  - preprocessing: default
+  - training: default
+  - evaluation: default
+  - logging: default
+  - _self_
+
+# Paths
+paths:
+  base_dir: ${oc.env:BASE_DIR,${hydra:runtime.cwd}}
+  data_dir: ${oc.env:DATA_DIR,${paths.base_dir}/data}
+  output_dir: ${oc.env:OUTPUT_DIR,${paths.base_dir}/output}
+  model_dir: ${paths.output_dir}/models
+  log_dir: ${paths.output_dir}/logs
+
+# Pipeline settings
+pipeline:
+  steps: [extract, load, clean, preprocess, train, evaluate]
+  force: false
+  description: "Default pipeline run"

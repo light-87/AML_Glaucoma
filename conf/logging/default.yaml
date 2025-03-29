@@ -1,0 +1,4 @@
+# Logging configuration
+use_wandb: false
+wandb_project: glaucoma-detection
+log_every_n_steps: 10

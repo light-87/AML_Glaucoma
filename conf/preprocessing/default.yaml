@@ -1,0 +1,19 @@
+# Preprocessing configuration
+image_size: [224, 224]  # Width, Height
+image_channels: 3  # RGB
+normalization: imagenet  # 'imagenet', 'instance', 'pixel', 'none'
+use_square_images: true  # Use square cropped images if available
+use_cropped_images: true  # Use cropped optic disc images if available
+mode: segmentation  # 'segmentation' or 'classification'
+
+# Augmentation settings
+augmentation:
+  enabled: true
+  rotation_range: 15
+  width_shift_range: 0.1
+  height_shift_range: 0.1
+  shear_range: 0.1
+  zoom_range: 0.1
+  horizontal_flip: true
+  vertical_flip: false
+  fill_mode: nearest

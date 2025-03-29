@@ -115,15 +115,22 @@ class GlaucomaDataModule(pl.LightningDataModule):
     """PyTorch Lightning DataModule for Glaucoma datasets."""
     
     def __init__(self, 
-                 data_df: pd.DataFrame,
-                 batch_size: int = 32,
-                 num_workers: int = 4,
-                 target_size: Tuple[int, int] = (224, 224),
-                 augment_train: bool = True,
-                 mode: str = 'segmentation',
-                 val_split: float = 0.15,
-                 test_split: float = 0.15,
-                 random_state: int = 42):
+             data_df: pd.DataFrame, 
+             batch_size: int = 32,
+             num_workers: int = 4,
+             target_size: Tuple[int, int] = (224, 224),
+             augment_train: bool = False, 
+             mode: str = 'segmentation',
+             val_split: float = 0.15,
+             test_split: float = 0.15,
+             random_state: int = 42,
+             use_memory_efficient: bool = False,  # New parameter
+             cache_dir: Optional[str] = None,     # New parameter
+             use_existing_splits: bool = False,   # New parameter
+             train_df: Optional[pd.DataFrame] = None,  # New parameter
+             val_df: Optional[pd.DataFrame] = None,    # New parameter
+             test_df: Optional[pd.DataFrame] = None):  # New parameter
+        
         """Initialize the data module."""
         super().__init__()
         self.data_df = data_df
@@ -139,11 +146,27 @@ class GlaucomaDataModule(pl.LightningDataModule):
         self.train_df = None
         self.val_df = None
         self.test_df = None
+        # Add these lines after the other initializations
+        self.use_memory_efficient = use_memory_efficient
+        self.cache_dir = cache_dir
+        self.use_existing_splits = use_existing_splits
+
+        # Set dataframes if using existing splits
+        if use_existing_splits:
+            self.train_df = train_df
+            self.val_df = val_df
+            self.test_df = test_df
     
     def setup(self, stage: Optional[str] = None):
         """Set up the data splits."""
+        # If using existing splits, just use them directly
+        if self.use_existing_splits and self.train_df is not None and self.val_df is not None and self.test_df is not None:
+            logger.info("Using existing data splits")
+            return
+            
+        # Otherwise create splits
         if 'split' in self.data_df.columns:
-            # Use existing splits
+            # Use existing splits from the dataframe
             self.train_df = self.data_df[self.data_df['split'] == 'train']
             self.val_df = self.data_df[self.data_df['split'] == 'val']
             self.test_df = self.data_df[self.data_df['split'] == 'test']
@@ -168,50 +191,92 @@ class GlaucomaDataModule(pl.LightningDataModule):
                 stratify=train_val_df['label'] if 'label' in train_val_df.columns else None
             )
     
+        # Log split sizes
+        logger.info(f"Data splits: Train: {len(self.train_df)}, Val: {len(self.val_df)}, Test: {len(self.test_df)}")
+    
     def train_dataloader(self) -> DataLoader:
         """Get the training data loader."""
-        dataset = GlaucomaDataset(
-            data=self.train_df,
-            target_size=self.target_size,
-            augment=self.augment_train,
-            mode=self.mode
-        )
-        return DataLoader(
-            dataset=dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
+        if self.use_memory_efficient:
+            from glaucoma_detection.memory_efficient_loader import create_memory_efficient_data_loader
+            return create_memory_efficient_data_loader(
+                data=self.train_df,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                target_size=self.target_size,
+                augment=self.augment_train,
+                mode=self.mode,
+                shuffle=True,
+                cache_dir=self.cache_dir
+            )
+        else:
+            dataset = GlaucomaDataset(
+                data=self.train_df,
+                target_size=self.target_size,
+                augment=self.augment_train,
+                mode=self.mode
+            )
+            return DataLoader(
+                dataset=dataset,
+                batch_size=self.batch_size,
+                shuffle=True,
+                num_workers=self.num_workers,
+                pin_memory=True
+            )
     
     def val_dataloader(self) -> DataLoader:
         """Get the validation data loader."""
-        dataset = GlaucomaDataset(
-            data=self.val_df,
-            target_size=self.target_size,
-            augment=False,
-            mode=self.mode
-        )
-        return DataLoader(
-            dataset=dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-    
+        if self.use_memory_efficient:
+            from glaucoma_detection.memory_efficient_loader import create_memory_efficient_data_loader
+            return create_memory_efficient_data_loader(
+                data=self.val_df,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                target_size=self.target_size,
+                augment=False,  # No augmentation for validation
+                mode=self.mode,
+                shuffle=False,
+                cache_dir=self.cache_dir
+            )
+        else:
+            dataset = GlaucomaDataset(
+                data=self.val_df,
+                target_size=self.target_size,
+                augment=False,  # No augmentation for validation
+                mode=self.mode
+            )
+            return DataLoader(
+                dataset=dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                pin_memory=True
+            )
+
     def test_dataloader(self) -> DataLoader:
         """Get the test data loader."""
-        dataset = GlaucomaDataset(
-            data=self.test_df,
-            target_size=self.target_size,
-            augment=False,
-            mode=self.mode
-        )
-        return DataLoader(
-            dataset=dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
+        if self.use_memory_efficient:
+            from glaucoma_detection.memory_efficient_loader import create_memory_efficient_data_loader
+            return create_memory_efficient_data_loader(
+                data=self.test_df,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                target_size=self.target_size,
+                augment=False,  # No augmentation for testing
+                mode=self.mode,
+                shuffle=False,
+                cache_dir=self.cache_dir
+            )
+        else:
+            dataset = GlaucomaDataset(
+                data=self.test_df,
+                target_size=self.target_size,
+                augment=False,  # No augmentation for testing
+                mode=self.mode
+            )
+            return DataLoader(
+                dataset=dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                pin_memory=True
+            )

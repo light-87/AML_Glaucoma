@@ -1,0 +1,26 @@
+{
+  "ORIGA": {
+    "dataset": "ORIGA",
+    "path": "C:\\Users\\vaibh\\Desktop\\Surrey\\AML\\AML_Glaucoma\\src\\glaucoma_detection\\data\\ORIGA",
+    "exists": true,
+    "valid": true,
+    "issues": []
+  },
+  "REFUGE": {
+    "dataset": "REFUGE",
+    "path": "C:\\Users\\vaibh\\Desktop\\Surrey\\AML\\AML_Glaucoma\\src\\glaucoma_detection\\data\\REFUGE",
+    "exists": true,
+    "valid": false,
+    "issues": [
+      "Required subdirectory not found: Images",
+      "Required subdirectory not found: Masks"
+    ]
+  },
+  "G1020": {
+    "dataset": "G1020",
+    "path": "C:\\Users\\vaibh\\Desktop\\Surrey\\AML\\AML_Glaucoma\\src\\glaucoma_detection\\data\\G1020",
+    "exists": true,
+    "valid": true,
+    "issues": []
+  }
+}

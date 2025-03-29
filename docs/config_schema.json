@@ -1,0 +1,445 @@
+{
+  "paths": {
+    "base_dir": {
+      "type": "str",
+      "required": true,
+      "description": "Base directory for the project"
+    }
+  },
+  "data": {
+    "zip_file": {
+      "type": "str",
+      "required": false,
+      "description": "Path to ZIP file if extraction is needed"
+    },
+    "random_state": {
+      "type": "int",
+      "required": false,
+      "default": 42,
+      "description": "Random seed for reproducibility"
+    },
+    "split_config": {
+      "train_ratio": {
+        "type": "float",
+        "required": false,
+        "default": 0.7,
+        "description": "Ratio of training data"
+      },
+      "val_ratio": {
+        "type": "float",
+        "required": false,
+        "default": 0.15,
+        "description": "Ratio of validation data"
+      },
+      "test_ratio": {
+        "type": "float",
+        "required": false,
+        "default": 0.15,
+        "description": "Ratio of test data"
+      }
+    }
+  },
+  "model": {
+    "architecture": {
+      "type": "str",
+      "required": true,
+      "options": [
+        "unet",
+        "unet++",
+        "deeplabv3",
+        "fpn"
+      ],
+      "description": "Model architecture to use"
+    },
+    "encoder": {
+      "type": "str",
+      "required": true,
+      "description": "Backbone encoder for the model"
+    },
+    "pretrained": {
+      "type": "bool",
+      "required": false,
+      "default": true,
+      "description": "Whether to use pretrained weights"
+    },
+    "in_channels": {
+      "type": "int",
+      "required": false,
+      "default": 3,
+      "description": "Number of input channels"
+    },
+    "num_classes": {
+      "type": "int",
+      "required": false,
+      "default": 1,
+      "description": "Number of output classes"
+    }
+  },
+  "preprocessing": {
+    "image_size": {
+      "type": "list",
+      "required": true,
+      "description": "Target image size (width, height)"
+    },
+    "image_channels": {
+      "type": "int",
+      "required": false,
+      "default": 3,
+      "description": "Number of image channels"
+    },
+    "normalization": {
+      "type": "str",
+      "required": false,
+      "default": "imagenet",
+      "options": [
+        "imagenet",
+        "instance",
+        "pixel",
+        "none"
+      ],
+      "description": "Normalization method"
+    },
+    "mode": {
+      "type": "str",
+      "required": false,
+      "default": "segmentation",
+      "options": [
+        "segmentation",
+        "classification"
+      ],
+      "description": "Mode of operation"
+    },
+    "augmentation": {
+      "enabled": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to use data augmentation"
+      },
+      "rotation_range": {
+        "type": "float",
+        "required": false,
+        "default": 15,
+        "description": "Rotation range for augmentation"
+      },
+      "width_shift_range": {
+        "type": "float",
+        "required": false,
+        "default": 0.1,
+        "description": "Width shift range for augmentation"
+      },
+      "height_shift_range": {
+        "type": "float",
+        "required": false,
+        "default": 0.1,
+        "description": "Height shift range for augmentation"
+      },
+      "shear_range": {
+        "type": "float",
+        "required": false,
+        "default": 0.1,
+        "description": "Shear range for augmentation"
+      },
+      "zoom_range": {
+        "type": "float",
+        "required": false,
+        "default": 0.1,
+        "description": "Zoom range for augmentation"
+      },
+      "horizontal_flip": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to use horizontal flip"
+      },
+      "vertical_flip": {
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Whether to use vertical flip"
+      }
+    }
+  },
+  "training": {
+    "epochs": {
+      "type": "int",
+      "required": true,
+      "description": "Number of training epochs"
+    },
+    "batch_size": {
+      "type": "int",
+      "required": true,
+      "description": "Batch size for training"
+    },
+    "num_workers": {
+      "type": "int",
+      "required": false,
+      "default": 4,
+      "description": "Number of workers for data loading"
+    },
+    "learning_rate": {
+      "type": "float",
+      "required": false,
+      "default": 0.001,
+      "description": "Learning rate"
+    },
+    "optimizer": {
+      "type": "str",
+      "required": false,
+      "default": "adam",
+      "options": [
+        "adam",
+        "sgd",
+        "adamw"
+      ],
+      "description": "Optimizer to use"
+    },
+    "loss_function": {
+      "type": "str",
+      "required": false,
+      "default": "combined",
+      "options": [
+        "combined",
+        "dice",
+        "bce",
+        "focal",
+        "jaccard"
+      ],
+      "description": "Loss function to use"
+    },
+    "precision": {
+      "type": "str",
+      "required": false,
+      "default": "32-true",
+      "options": [
+        "16-mixed",
+        "32-true"
+      ],
+      "description": "Precision for training"
+    },
+    "use_gpu": {
+      "type": "bool",
+      "required": false,
+      "default": true,
+      "description": "Whether to use GPU for training"
+    },
+    "gpu_ids": {
+      "type": "list",
+      "required": false,
+      "default": [
+        0
+      ],
+      "description": "List of GPU IDs to use"
+    },
+    "gradient_clip_val": {
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "Gradient clipping value"
+    },
+    "accumulate_grad_batches": {
+      "type": "int",
+      "required": false,
+      "default": 1,
+      "description": "Number of batches to accumulate gradients"
+    },
+    "lr_scheduler": {
+      "enabled": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to use learning rate scheduler"
+      },
+      "factor": {
+        "type": "float",
+        "required": false,
+        "default": 0.1,
+        "description": "Factor by which to reduce learning rate"
+      },
+      "patience": {
+        "type": "int",
+        "required": false,
+        "default": 5,
+        "description": "Patience for learning rate scheduler"
+      },
+      "min_lr": {
+        "type": "float",
+        "required": false,
+        "default": 1e-06,
+        "description": "Minimum learning rate"
+      },
+      "monitor": {
+        "type": "str",
+        "required": false,
+        "default": "val_loss",
+        "description": "Metric to monitor for scheduler"
+      }
+    },
+    "early_stopping": {
+      "enabled": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to use early stopping"
+      },
+      "patience": {
+        "type": "int",
+        "required": false,
+        "default": 10,
+        "description": "Patience for early stopping"
+      },
+      "monitor": {
+        "type": "str",
+        "required": false,
+        "default": "val_loss",
+        "description": "Metric to monitor for early stopping"
+      },
+      "min_delta": {
+        "type": "float",
+        "required": false,
+        "default": 0.001,
+        "description": "Minimum change to qualify as improvement"
+      },
+      "mode": {
+        "type": "str",
+        "required": false,
+        "default": "min",
+        "options": [
+          "min",
+          "max"
+        ],
+        "description": "Mode for early stopping"
+      }
+    },
+    "checkpointing": {
+      "enabled": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to use checkpointing"
+      },
+      "save_top_k": {
+        "type": "int",
+        "required": false,
+        "default": 3,
+        "description": "Number of best models to save"
+      },
+      "monitor": {
+        "type": "str",
+        "required": false,
+        "default": "val_loss",
+        "description": "Metric to monitor for checkpointing"
+      },
+      "mode": {
+        "type": "str",
+        "required": false,
+        "default": "min",
+        "options": [
+          "min",
+          "max"
+        ],
+        "description": "Mode for checkpointing"
+      }
+    },
+    "use_class_weights": {
+      "type": "bool",
+      "required": false,
+      "default": true,
+      "description": "Whether to use class weights for imbalanced data"
+    }
+  },
+  "evaluation": {
+    "metrics": {
+      "type": "list",
+      "required": false,
+      "default": [
+        "dice",
+        "iou",
+        "accuracy",
+        "precision",
+        "recall",
+        "f1"
+      ],
+      "description": "Metrics to calculate during evaluation"
+    },
+    "threshold": {
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "Threshold for binary segmentation"
+    },
+    "num_samples": {
+      "type": "int",
+      "required": false,
+      "default": 5,
+      "description": "Number of sample visualizations"
+    },
+    "visualization": {
+      "enabled": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to generate visualizations"
+      },
+      "plot_wrong_predictions": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to plot wrong predictions"
+      },
+      "plot_gradcam": {
+        "type": "bool",
+        "required": false,
+        "default": true,
+        "description": "Whether to plot GradCAM visualizations"
+      }
+    }
+  },
+  "logging": {
+    "use_wandb": {
+      "type": "bool",
+      "required": false,
+      "default": false,
+      "description": "Whether to use Weights & Biases for logging"
+    },
+    "wandb_project": {
+      "type": "str",
+      "required": false,
+      "default": "glaucoma-detection",
+      "description": "Weights & Biases project name"
+    },
+    "log_every_n_steps": {
+      "type": "int",
+      "required": false,
+      "default": 10,
+      "description": "How often to log metrics"
+    }
+  },
+  "pipeline": {
+    "steps": {
+      "type": "list",
+      "required": false,
+      "default": [
+        "extract",
+        "load",
+        "clean",
+        "preprocess",
+        "train",
+        "evaluate"
+      ],
+      "description": "Pipeline steps to execute"
+    },
+    "force": {
+      "type": "bool",
+      "required": false,
+      "default": false,
+      "description": "Whether to force rerun of steps"
+    },
+    "description": {
+      "type": "str",
+      "required": false,
+      "default": "Default pipeline run",
+      "description": "Description of the pipeline run"
+    }
+  }
+}

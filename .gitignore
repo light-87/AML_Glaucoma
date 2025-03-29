@@ -55,11 +55,11 @@ venv/
 ENV/
 
 # Data and outputs
-data/
-output/
-logs/
-models/
-wandb/
+# data/
+# output/
+# logs/
+# models/
+# wandb/
 
 # Hydra
 outputs/

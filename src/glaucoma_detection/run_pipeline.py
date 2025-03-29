@@ -18,13 +18,13 @@ import hydra
 from typing import List, Optional, Dict, Any, Union, Tuple
 import wandb
 
-# Import refactored modules
-from data_loader import extract_zip, consolidate_datasets
-from data_cleaner import clean_dataset
-from preprocessor import GlaucomaDataModule
-from model import create_model, save_model, load_model
-from trainer import GlaucomaSegmentationModel, train_model
-from evaluator import SegmentationEvaluator
+# Import project modules
+from glaucoma_detection.data_loader import extract_zip, consolidate_datasets, save_consolidated_dataset
+from glaucoma_detection.data_cleaner import clean_dataset
+from glaucoma_detection.preprocessor import GlaucomaDataModule
+from glaucoma_detection.model import create_model, save_model, load_model
+from glaucoma_detection.trainer import GlaucomaSegmentationModel, train_model
+from glaucoma_detection.evaluator import SegmentationEvaluator
 
 # Create Typer app
 app = typer.Typer(help="Glaucoma Detection Pipeline")
@@ -40,9 +40,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-@hydra.main(config_path="conf", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
-    """Main entry point for the pipeline."""
+# Define the main function to be used with Hydra
+@hydra.main(config_path="../conf", config_name="config", version_base=None)
+def run_with_hydra(cfg: DictConfig) -> None:
+    """Main entry point for the pipeline using Hydra."""
     # Print config
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
     
@@ -68,7 +69,7 @@ def main(cfg: DictConfig) -> None:
     if "load" in steps:
         df = consolidate_datasets(cfg.paths.data_dir)
         consolidated_csv = output_dir / "consolidated_glaucoma_dataset.csv"
-        df.to_csv(consolidated_csv, index=False)
+        save_consolidated_dataset(df, str(consolidated_csv))
         logger.info(f"Saved consolidated dataset to {consolidated_csv}")
     else:
         # Try to load existing consolidated dataset
@@ -137,7 +138,7 @@ def main(cfg: DictConfig) -> None:
             model=model,
             data_module=data_module,
             config=cfg.training,
-            output_dir=output_dir
+            output_dir=str(output_dir)
         )
         
         # Close wandb
@@ -167,7 +168,7 @@ def main(cfg: DictConfig) -> None:
         # Initialize evaluator
         evaluator = SegmentationEvaluator(
             model=lightning_model,
-            output_dir=output_dir / "evaluation"
+            output_dir=str(output_dir / "evaluation")
         )
         
         # Evaluate model
@@ -207,44 +208,54 @@ def main(cfg: DictConfig) -> None:
     
     logger.info(f"Pipeline run {run_id} completed")
 
+# Define Typer CLI command that uses Hydra under the hood
 @app.command()
 def run(
-    config: str = typer.Option(None, "--config", "-c", help="Path to config file"),
+    config_path: str = typer.Option(None, "--config", "-c", help="Path to config file"),
     steps: str = typer.Option("extract,load,clean,preprocess,train,evaluate", "--steps", "-s", 
-                              help="Comma-separated list of steps to run"),
-    output_dir: str = typer.Option("output", "--output-dir", "-o", help="Output directory"),
+                             help="Comma-separated list of steps to run"),
+    output_dir: str = typer.Option(None, "--output-dir", "-o", help="Output directory"),
     data_dir: str = typer.Option(None, "--data-dir", "-d", help="Data directory"),
     zip_file: str = typer.Option(None, "--zip-file", "-z", help="Path to ZIP file"),
     force: bool = typer.Option(False, "--force", "-f", help="Force rerun of all steps"),
     description: str = typer.Option("", "--description", help="Run description"),
-    wandb: bool = typer.Option(False, "--wandb", help="Enable Weights & Biases logging")
+    wandb_logging: bool = typer.Option(False, "--wandb", help="Enable Weights & Biases logging")
 ):
     """Run the pipeline with specified steps."""
-    # Override configuration with command line arguments
-    overrides = []
+    # Build command-line arguments for hydra
+    argv = []
+    
+    # Add explicit overrides
     if steps:
-        overrides.append(f"pipeline.steps=[{','.join(steps.split(','))}]")
+        step_list = steps.split(',')
+        argv.append(f"pipeline.steps={step_list}")
+    
     if output_dir:
-        overrides.append(f"paths.output_dir={output_dir}")
+        argv.append(f"paths.output_dir={output_dir}")
+    
     if data_dir:
-        overrides.append(f"paths.data_dir={data_dir}")
+        argv.append(f"paths.data_dir={data_dir}")
+    
     if zip_file:
-        overrides.append(f"data.zip_file={zip_file}")
+        argv.append(f"data.zip_file={zip_file}")
+    
     if force:
-        overrides.append("pipeline.force=true")
+        argv.append("pipeline.force=true")
+    
     if description:
-        overrides.append(f"pipeline.description='{description}'")
-    if wandb:
-        overrides.append("logging.use_wandb=true")
+        argv.append(f"pipeline.description='{description}'")
     
-    # Load config if provided
-    if config:
-        overrides.append(f"--config-path={os.path.dirname(config)}")
-        overrides.append(f"--config-name={os.path.basename(config).split('.')[0]}")
+    if wandb_logging:
+        argv.append("logging.use_wandb=true")
     
-    # Call hydra with overrides
-    main_with_overrides = hydra.main(config_path="conf", config_name="config", version_base=None)(main)
-    main_with_overrides(overrides)
+    # Handle custom config file
+    if config_path:
+        # Use the provided config file
+        argv.append(f"--config-path={os.path.dirname(config_path)}")
+        argv.append(f"--config-name={os.path.basename(config_path).split('.')[0]}")
+    
+    # Call hydra's main function with our arguments
+    run_with_hydra(argv)
 
 if __name__ == "__main__":
     app()

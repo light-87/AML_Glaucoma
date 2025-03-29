@@ -65,9 +65,49 @@ class GlaucomaDataset(Dataset):
         """Get the length of the dataset."""
         return len(self.data)
     
+    
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get a sample from the dataset."""
-        # Implementation details...
+        # Get image and mask paths
+        row = self.data.iloc[idx]
+        image_path = row['image_path']
+        mask_path = row['mask_path'] if 'mask_path' in row else None
+        
+        # Load image
+        image = cv2.imread(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Load mask if available
+        if mask_path and os.path.exists(mask_path) and self.mode == 'segmentation':
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            # Normalize mask to 0-1 range
+            mask = mask / 255.0 if mask.max() > 1 else mask
+            # Resize mask to target size
+            mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
+            mask = np.expand_dims(mask, axis=0)  # Add channel dimension for masks
+        elif self.mode == 'classification' and 'label' in row:
+            # For classification, use label as target
+            label = int(row['label'])
+            mask = np.array([label], dtype=np.float32)
+        else:
+            # Empty mask if not available
+            mask = np.zeros((1, *self.target_size), dtype=np.float32)
+        
+        # Resize image to target size
+        image = cv2.resize(image, self.target_size, interpolation=cv2.INTER_AREA)
+        
+        # Apply transforms
+        if self.transforms:
+            if self.mode == 'segmentation':
+                transformed = self.transforms(image=image, mask=mask[0])
+                image = transformed["image"]
+                mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
+            else:
+                transformed = self.transforms(image=image)
+                image = transformed["image"]
+                mask = torch.tensor(mask, dtype=torch.float32)
+        
+        return image, mask
 
 class GlaucomaDataModule(pl.LightningDataModule):
     """PyTorch Lightning DataModule for Glaucoma datasets."""

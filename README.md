@@ -203,13 +203,3 @@ Contributions are welcome! Please follow these steps:
 3. Make your changes
 4. Run the tests
 5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- The ORIGA, REFUGE, and G1020 datasets for providing data
-- The PyTorch Lightning, Hydra, and Segmentation Models PyTorch teams
-- The research community in glaucoma detection

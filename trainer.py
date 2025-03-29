@@ -1,491 +1,295 @@
 """
 Training Module
 
-This module handles the training process for the glaucoma detection models.
-It implements functions for training, validation, and early stopping.
-
-Functions:
-- train_epoch(): Train model for one epoch
-- validate(): Validate model on validation set
-- train_model(): Train model for multiple epochs with early stopping
+PyTorch Lightning implementation for training segmentation models.
 """
 
 import os
-import time
-import numpy as np
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
+from pytorch_lightning.loggers import WandbLogger, CSVLogger
 import torch
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+import torch.nn as nn
+import torch.optim as optim
+import torchmetrics
+from typing import Dict, Any, Tuple, Optional, List, Union
 import logging
-from tqdm import tqdm
-import matplotlib.pyplot as plt
+import wandb
+import segmentation_models_pytorch as smp
+from torchmetrics.classification import BinaryJaccardIndex, BinaryF1Score, BinaryAccuracy
+from torchmetrics.regression import MeanSquaredError
 
-# Import from other modules
-from model import (
-    create_model, get_optimizer, get_loss_function, 
-    evaluate_metrics, save_model, load_model
-)
-from config import TRAINING_CONFIG, MODEL_CONFIG
-from utils import setup_logger, create_directory
+logger = logging.getLogger(__name__)
 
-# Set up logging
-logger = setup_logger('trainer')
+class GlaucomaSegmentationModel(pl.LightningModule):
+    """PyTorch Lightning module for glaucoma segmentation."""
+    
+    def __init__(self, model: nn.Module, config: Dict[str, Any]):
+        """Initialize the Lightning module."""
+        super().__init__()
+        self.model = model
+        self.config = config
+        
+        # Save hyperparameters for reproducibility
+        self.save_hyperparameters(config)
+        
+        # Set up loss function
+        self.loss_fn = self._get_loss_function()
+        
+        # Set up metrics
+        self.train_metrics = self._get_metrics()
+        self.val_metrics = self._get_metrics()
+        self.test_metrics = self._get_metrics()
+    
+    def _get_loss_function(self):
+        """Get the loss function based on config."""
+        loss_type = self.config.get('loss_function', 'combined')
+        
+        if loss_type == 'dice':
+            return smp.losses.DiceLoss(mode='binary')
+        elif loss_type == 'jaccard':
+            return smp.losses.JaccardLoss(mode='binary')
+        elif loss_type == 'focal':
+            return smp.losses.FocalLoss(mode='binary')
+        elif loss_type == 'bce':
+            return nn.BCELoss()
+        elif loss_type == 'combined':
+            # Combine BCE and Dice loss
+            return smp.losses.DiceLoss(mode='binary') + nn.BCELoss()
+        else:
+            logger.warning(f"Unknown loss function: {loss_type}. Using combined loss.")
+            return smp.losses.DiceLoss(mode='binary') + nn.BCELoss()
+    
+    def _get_metrics(self):
+        """Get metrics for evaluation."""
+        metrics = torchmetrics.MetricCollection({
+            'dice': BinaryJaccardIndex(),  # Dice coefficient is same as IoU for binary case
+            'f1': BinaryF1Score(),
+            'accuracy': BinaryAccuracy(),
+            'mse': MeanSquaredError()
+        })
+        return metrics
+    
+    def forward(self, x):
+        """Forward pass through the model."""
+        return self.model(x)
+    
+    def configure_optimizers(self):
+        """Configure optimizers and schedulers."""
+        optimizer_type = self.config.get('optimizer', 'adam')
+        lr = self.config.get('learning_rate', 0.001)
+        
+        # Get optimizer
+        if optimizer_type.lower() == 'adam':
+            optimizer = optim.Adam(self.parameters(), lr=lr)
+        elif optimizer_type.lower() == 'sgd':
+            optimizer = optim.SGD(self.parameters(), lr=lr, momentum=0.9)
+        elif optimizer_type.lower() == 'adamw':
+            optimizer = optim.AdamW(self.parameters(), lr=lr)
+        else:
+            logger.warning(f"Unknown optimizer: {optimizer_type}. Using Adam.")
+            optimizer = optim.Adam(self.parameters(), lr=lr)
+        
+        # Configure scheduler if enabled
+        if self.config.get('lr_scheduler', {}).get('enabled', False):
+            scheduler_config = self.config.get('lr_scheduler', {})
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=scheduler_config.get('factor', 0.1),
+                patience=scheduler_config.get('patience', 5),
+                min_lr=scheduler_config.get('min_lr', 1e-6),
+                verbose=True
+            )
+            
+            return {
+                'optimizer': optimizer,
+                'lr_scheduler': {
+                    'scheduler': scheduler,
+                    'monitor': 'val_loss',
+                    'interval': 'epoch',
+                    'frequency': 1
+                }
+            }
+        
+        return optimizer
+    
+    def training_step(self, batch, batch_idx):
+        """Training step."""
+        images, masks = batch
+        outputs = self(images)
+        loss = self.loss_fn(outputs, masks)
+        
+        # Log loss
+        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+        
+        # Update and log metrics
+        metrics = self.train_metrics(outputs, masks)
+        self.log_dict({f'train_{k}': v for k, v in metrics.items()}, on_epoch=True)
+        
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        """Validation step."""
+        images, masks = batch
+        outputs = self(images)
+        loss = self.loss_fn(outputs, masks)
+        
+        # Log loss
+        self.log('val_loss', loss, prog_bar=True, on_epoch=True)
+        
+        # Update and log metrics
+        metrics = self.val_metrics(outputs, masks)
+        self.log_dict({f'val_{k}': v for k, v in metrics.items()}, on_epoch=True)
+        
+        # Log sample images at the end of validation
+        if batch_idx == 0 and self.logger:
+            self._log_images(images, masks, outputs)
+        
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        """Test step."""
+        images, masks = batch
+        outputs = self(images)
+        loss = self.loss_fn(outputs, masks)
+        
+        # Log loss
+        self.log('test_loss', loss, on_epoch=True)
+        
+        # Update and log metrics
+        metrics = self.test_metrics(outputs, masks)
+        self.log_dict({f'test_{k}': v for k, v in metrics.items()}, on_epoch=True)
+        
+        return loss
+    
+    def _log_images(self, images, masks, outputs, num_samples=4):
+        """Log sample images to the logger."""
+        if isinstance(self.logger, WandbLogger) and wandb.run is not None:
+            num_samples = min(num_samples, images.size(0))
+            images = images[:num_samples]
+            masks = masks[:num_samples]
+            outputs = outputs[:num_samples]
+            
+            # Convert to numpy for visualization
+            images_np = images.cpu().numpy()
+            masks_np = masks.cpu().numpy()
+            outputs_np = (outputs > 0.5).float().cpu().numpy()
+            
+            # Log to wandb
+            wandb.log({
+                "sample_images": [
+                    wandb.Image(
+                        images_np[i].transpose(1, 2, 0),
+                        masks={
+                            "ground_truth": {"mask_data": masks_np[i, 0], "class_labels": {0: "background", 1: "glaucoma"}},
+                            "prediction": {"mask_data": outputs_np[i, 0], "class_labels": {0: "background", 1: "glaucoma"}}
+                        }
+                    )
+                    for i in range(num_samples)
+                ]
+            })
 
-def train_epoch(model, dataloader, optimizer, loss_fn, device):
-    """
-    Train model for one epoch.
-    
-    Parameters:
-    -----------
-    model : torch.nn.Module
-        PyTorch model
-    dataloader : torch.utils.data.DataLoader
-        Training data loader
-    optimizer : torch.optim.Optimizer
-        Optimizer
-    loss_fn : function
-        Loss function
-    device : str
-        Device to train on ('cuda' or 'cpu')
-        
-    Returns:
-    --------
-    tuple
-        (epoch_loss, metrics)
-    """
-    model.train()
-    running_loss = 0.0
-    
-    # Store predictions and targets for metrics calculation
-    all_predictions = []
-    all_targets = []
-    
-    # Progress bar
-    progress_bar = tqdm(dataloader, desc="Training")
-    
-    for batch_idx, (images, masks) in enumerate(progress_bar):
-        # Move data to device
-        images = images.to(device, dtype=torch.float32)
-        masks = masks.to(device, dtype=torch.float32)
-        
-        # Zero the parameter gradients
-        optimizer.zero_grad()
-        
-        # Forward pass
-        outputs = model(images)
-        
-        # Calculate loss
-        loss = loss_fn(outputs, masks)
-        
-        # Backward pass and optimize
-        loss.backward()
-        optimizer.step()
-        
-        # Update running loss
-        running_loss += loss.item()
-        
-        # Update progress bar
-        progress_bar.set_postfix(loss=loss.item())
-        
-        # Store predictions and targets for metrics calculation
-        all_predictions.append(outputs.detach().cpu())
-        all_targets.append(masks.detach().cpu())
-    
-    # Calculate average loss
-    epoch_loss = running_loss / len(dataloader)
-    
-    # Calculate metrics
-    all_predictions = torch.cat(all_predictions, dim=0)
-    all_targets = torch.cat(all_targets, dim=0)
-    metrics = evaluate_metrics(all_predictions, all_targets)
-    
-    return epoch_loss, metrics
-
-def validate(model, dataloader, loss_fn, device):
-    """
-    Validate model on validation set.
-    
-    Parameters:
-    -----------
-    model : torch.nn.Module
-        PyTorch model
-    dataloader : torch.utils.data.DataLoader
-        Validation data loader
-    loss_fn : function
-        Loss function
-    device : str
-        Device to validate on ('cuda' or 'cpu')
-        
-    Returns:
-    --------
-    tuple
-        (val_loss, metrics)
-    """
-    model.eval()
-    running_loss = 0.0
-    
-    # Store predictions and targets for metrics calculation
-    all_predictions = []
-    all_targets = []
-    
-    # No gradient calculation for validation
-    with torch.no_grad():
-        # Progress bar
-        progress_bar = tqdm(dataloader, desc="Validation")
-        
-        for batch_idx, (images, masks) in enumerate(progress_bar):
-            # Move data to device
-            images = images.to(device, dtype=torch.float32)
-            masks = masks.to(device, dtype=torch.float32)
-            
-            # Forward pass
-            outputs = model(images)
-            
-            # Calculate loss
-            loss = loss_fn(outputs, masks)
-            
-            # Update running loss
-            running_loss += loss.item()
-            
-            # Update progress bar
-            progress_bar.set_postfix(loss=loss.item())
-            
-            # Store predictions and targets for metrics calculation
-            all_predictions.append(outputs.detach().cpu())
-            all_targets.append(masks.detach().cpu())
-    
-    # Calculate average loss
-    val_loss = running_loss / len(dataloader)
-    
-    # Calculate metrics
-    all_predictions = torch.cat(all_predictions, dim=0)
-    all_targets = torch.cat(all_targets, dim=0)
-    metrics = evaluate_metrics(all_predictions, all_targets)
-    
-    return val_loss, metrics
-
-def train_model(train_loader, val_loader, model=None, config=None, 
-               checkpoint_dir=None, device=None):
-    """
-    Train model for multiple epochs with early stopping.
-    
-    Parameters:
-    -----------
-    train_loader : torch.utils.data.DataLoader
-        Training data loader
-    val_loader : torch.utils.data.DataLoader
-        Validation data loader
-    model : torch.nn.Module, optional
-        PyTorch model, by default None
-    config : dict, optional
-        Training configuration, by default None
-    checkpoint_dir : str, optional
-        Directory to save checkpoints, by default None
-    device : str, optional
-        Device to train on ('cuda' or 'cpu'), by default None
-        
-    Returns:
-    --------
-    tuple
-        (trained_model, history, best_epoch)
-    """
-    # Set default configuration
-    if config is None:
-        config = TRAINING_CONFIG
-    
-    # Set device
-    if device is None:
-        device = torch.device('cuda' if torch.cuda.is_available() and config['use_gpu'] else 'cpu')
-    
-    # Set checkpoint directory
-    if checkpoint_dir is None:
-        checkpoint_dir = config.get('checkpoint_dir', 'checkpoints')
-    
+def setup_training(
+    model: nn.Module,
+    data_module: pl.LightningDataModule,
+    config: Dict[str, Any],
+    output_dir: str
+) -> pl.Trainer:
+    """Set up training with PyTorch Lightning."""
     # Create checkpoint directory if it doesn't exist
-    create_directory(checkpoint_dir)
+    checkpoint_dir = os.path.join(output_dir, 'models')
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
-    # Create model if not provided
-    if model is None:
-        model = create_model()
+    # Set up callbacks
+    callbacks = []
     
-    # Move model to device
-    model = model.to(device)
-    
-    # Get optimizer
-    optimizer = get_optimizer(
-        model, 
-        lr=config['learning_rate'],
-        optimizer_type=config['optimizer']
-    )
-    
-    # Get loss function
-    loss_fn = get_loss_function(config['loss_function'])
-    
-    # Learning rate scheduler
-    scheduler = None
-    if config['lr_scheduler']['enabled']:
-        scheduler = ReduceLROnPlateau(
-            optimizer,
-            mode='min' if config['lr_scheduler']['monitor'] == 'val_loss' else 'max',
-            factor=config['lr_scheduler']['factor'],
-            patience=config['lr_scheduler']['patience'],
-            min_lr=config['lr_scheduler']['min_lr'],
+    # Model checkpoint
+    if config.get('checkpointing', {}).get('enabled', True):
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=checkpoint_dir,
+            filename=f"{config.get('model_name', 'glaucoma_model')}" + "-{epoch:02d}-{val_loss:.4f}",
+            monitor=config.get('checkpointing', {}).get('monitor', 'val_loss'),
+            mode=config.get('checkpointing', {}).get('mode', 'min'),
+            save_top_k=config.get('checkpointing', {}).get('save_top_k', 3),
+            save_last=True,
             verbose=True
         )
+        callbacks.append(checkpoint_callback)
     
-    # Initialize variables for training
-    start_epoch = 0
-    epochs = config['epochs']
-    best_val_loss = float('inf')
-    best_val_metric = -float('inf')
-    best_epoch = 0
-    early_stopping_counter = 0
-    early_stopping_patience = config['early_stopping']['patience']
-    early_stopping_min_delta = config['early_stopping']['min_delta']
-    
-    # Initialize history
-    history = {
-        'train_loss': [],
-        'val_loss': [],
-        'train_metrics': [],
-        'val_metrics': [],
-        'learning_rates': []
-    }
-    
-    # Start training
-    logger.info(f"Starting training for {epochs} epochs on {device}")
-    start_time = time.time()
-    
-    for epoch in range(start_epoch, epochs):
-        # Train one epoch
-        train_loss, train_metrics = train_epoch(
-            model, train_loader, optimizer, loss_fn, device
+    # Early stopping
+    if config.get('early_stopping', {}).get('enabled', True):
+        early_stopping_callback = EarlyStopping(
+            monitor=config.get('early_stopping', {}).get('monitor', 'val_loss'),
+            patience=config.get('early_stopping', {}).get('patience', 10),
+            min_delta=config.get('early_stopping', {}).get('min_delta', 0.001),
+            verbose=True,
+            mode=config.get('early_stopping', {}).get('mode', 'min')
         )
-        
-        # Validate
-        val_loss, val_metrics = validate(
-            model, val_loader, loss_fn, device
+        callbacks.append(early_stopping_callback)
+    
+    # Learning rate monitor
+    if config.get('lr_scheduler', {}).get('enabled', False):
+        lr_monitor = LearningRateMonitor(logging_interval='epoch')
+        callbacks.append(lr_monitor)
+    
+    # Set up loggers
+    loggers = []
+    
+    # Weights & Biases logger
+    if config.get('logging', {}).get('use_wandb', False):
+        wandb_logger = WandbLogger(
+            project=config.get('logging', {}).get('wandb_project', 'glaucoma-detection'),
+            name=config.get('logging', {}).get('run_name', None),
+            save_dir=os.path.join(output_dir, 'logs'),
+            log_model=True
         )
-        
-        # Get current learning rate
-        current_lr = optimizer.param_groups[0]['lr']
-        
-        # Update history
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['train_metrics'].append(train_metrics)
-        history['val_metrics'].append(val_metrics)
-        history['learning_rates'].append(current_lr)
-        
-        # Print epoch results
-        logger.info(f"Epoch {epoch+1}/{epochs} - "
-                    f"Train Loss: {train_loss:.4f}, "
-                    f"Val Loss: {val_loss:.4f}, "
-                    f"Train Dice: {train_metrics['dice']:.4f}, "
-                    f"Val Dice: {val_metrics['dice']:.4f}, "
-                    f"LR: {current_lr:.6f}")
-        
-        # Update scheduler
-        if scheduler is not None:
-            if config['lr_scheduler']['monitor'] == 'val_loss':
-                scheduler.step(val_loss)
-            else:
-                scheduler.step(val_metrics['dice'])
-        
-        # Check if this is the best model based on validation loss
-        if val_loss < best_val_loss - early_stopping_min_delta:
-            logger.info(f"Validation loss improved from {best_val_loss:.4f} to {val_loss:.4f}")
-            best_val_loss = val_loss
-            best_epoch = epoch
-            early_stopping_counter = 0
-            
-            # Save best model
-            if config['checkpointing']['enabled'] and config['checkpointing']['save_best_only']:
-                model_name = config.get('model_name', 'model')
-                best_model_path = os.path.join(checkpoint_dir, f"{model_name}_best.pth")
-                save_model(
-                    model, 
-                    best_model_path, 
-                    optimizer,
-                    epoch,
-                    val_loss,
-                    val_metrics
-                )
-        else:
-            early_stopping_counter += 1
-            logger.info(f"Validation loss did not improve. Early stopping counter: {early_stopping_counter}/{early_stopping_patience}")
-        
-        # Check if alternate metric (Dice) is better
-        monitor_metric = 'dice'  # Can be configured
-        if val_metrics[monitor_metric] > best_val_metric:
-            logger.info(f"Validation {monitor_metric} improved from {best_val_metric:.4f} to {val_metrics[monitor_metric]:.4f}")
-            best_val_metric = val_metrics[monitor_metric]
-            
-            # Save model with best metric
-            if config['checkpointing']['enabled']:
-                model_name = config.get('model_name', 'model')
-                best_metric_path = os.path.join(checkpoint_dir, f"{model_name}_best_{monitor_metric}.pth")
-                save_model(
-                    model,
-                    best_metric_path,
-                    optimizer,
-                    epoch,
-                    val_loss,
-                    val_metrics
-                )
-        
-        # Early stopping
-        if config['early_stopping']['enabled'] and early_stopping_counter >= early_stopping_patience:
-            logger.info(f"Early stopping triggered after {epoch+1} epochs")
-            break
-        
-        # Save checkpoint for every epoch if not save_best_only
-        if config['checkpointing']['enabled'] and not config['checkpointing']['save_best_only']:
-            model_name = config.get('model_name', 'model')
-            checkpoint_path = os.path.join(checkpoint_dir, f"{model_name}_epoch_{epoch+1}.pth")
-            save_model(
-                model,
-                checkpoint_path,
-                optimizer,
-                epoch,
-                val_loss,
-                val_metrics
-            )
+        loggers.append(wandb_logger)
     
-    # Calculate total training time
-    total_time = time.time() - start_time
-    hours, remainder = divmod(total_time, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    logger.info(f"Training completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
-    logger.info(f"Best epoch: {best_epoch+1} with validation loss: {best_val_loss:.4f}")
-    
-    # Plot training history
-    plot_training_history(history, checkpoint_dir)
-    
-    return model, history, best_epoch
-
-def plot_training_history(history, output_dir):
-    """
-    Plot training history.
-    
-    Parameters:
-    -----------
-    history : dict
-        Training history
-    output_dir : str
-        Directory to save plots
-    """
-    # Create output directory if it doesn't exist
-    create_directory(output_dir)
-    
-    # Plot loss
-    plt.figure(figsize=(10, 5))
-    plt.plot(history['train_loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'loss_history.png'))
-    plt.close()
-    
-    # Plot Dice coefficient
-    train_dice = [metrics['dice'] for metrics in history['train_metrics']]
-    val_dice = [metrics['dice'] for metrics in history['val_metrics']]
-    
-    plt.figure(figsize=(10, 5))
-    plt.plot(train_dice, label='Train Dice')
-    plt.plot(val_dice, label='Validation Dice')
-    plt.xlabel('Epoch')
-    plt.ylabel('Dice Coefficient')
-    plt.title('Training and Validation Dice Coefficient')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'dice_history.png'))
-    plt.close()
-    
-    # Plot learning rates
-    plt.figure(figsize=(10, 5))
-    plt.plot(history['learning_rates'])
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title('Learning Rate Schedule')
-    plt.yscale('log')
-    plt.grid(True)
-    plt.savefig(os.path.join(output_dir, 'lr_history.png'))
-    plt.close()
-    
-    # Save history as CSV
-    import pandas as pd
-    
-    df = pd.DataFrame({
-        'train_loss': history['train_loss'],
-        'val_loss': history['val_loss'],
-        'train_dice': train_dice,
-        'val_dice': val_dice,
-        'learning_rate': history['learning_rates']
-    })
-    
-    df.to_csv(os.path.join(output_dir, 'training_history.csv'), index=False)
-
-def main(train_csv, val_csv, config=None, checkpoint_dir=None):
-    """
-    Main function to train the model.
-    
-    Parameters:
-    -----------
-    train_csv : str
-        Path to training CSV file
-    val_csv : str
-        Path to validation CSV file
-    config : dict, optional
-        Training configuration, by default None
-    checkpoint_dir : str, optional
-        Directory to save checkpoints, by default None
-        
-    Returns:
-    --------
-    tuple
-        (trained_model, history, best_epoch)
-    """
-    import pandas as pd
-    from preprocessor import create_dataloaders
-    
-    # Load training and validation dataframes
-    try:
-        train_df = pd.read_csv(train_csv)
-        val_df = pd.read_csv(val_csv)
-    except Exception as e:
-        logger.error(f"Error loading datasets: {e}")
-        return None, None, None
-    
-    # Create data loaders
-    train_loader, val_loader, _ = create_dataloaders(
-        train_df,
-        val_df,
-        batch_size=TRAINING_CONFIG['batch_size'],
-        num_workers=TRAINING_CONFIG.get('num_workers', 4),
-        mode='segmentation'
+    # CSV logger
+    csv_logger = CSVLogger(
+        save_dir=os.path.join(output_dir, 'logs'),
+        name="csv_logs"
     )
+    loggers.append(csv_logger)
+    
+    # Set up trainer
+    trainer = pl.Trainer(
+        max_epochs=config.get('epochs', 50),
+        accelerator='gpu' if torch.cuda.is_available() and config.get('use_gpu', True) else 'cpu',
+        devices=config.get('gpu_ids', [0]) if torch.cuda.is_available() and config.get('use_gpu', True) else None,
+        callbacks=callbacks,
+        logger=loggers,
+        log_every_n_steps=10,
+        deterministic=True,
+        precision=config.get('precision', '32-true'),
+        gradient_clip_val=config.get('gradient_clip_val', 0.0),
+        accumulate_grad_batches=config.get('accumulate_grad_batches', 1)
+    )
+    
+    return trainer
+
+def train_model(
+    model: nn.Module,
+    data_module: pl.LightningDataModule,
+    config: Dict[str, Any],
+    output_dir: str
+) -> Tuple[pl.LightningModule, pl.Trainer]:
+    """Train model with PyTorch Lightning."""
+    # Create lightning module
+    lightning_model = GlaucomaSegmentationModel(model, config)
+    
+    # Set up trainer
+    trainer = setup_training(model, data_module, config, output_dir)
     
     # Train model
-    model, history, best_epoch = train_model(
-        train_loader, 
-        val_loader, 
-        config=config,
-        checkpoint_dir=checkpoint_dir
-    )
+    logger.info("Starting model training...")
+    trainer.fit(lightning_model, data_module)
     
-    return model, history, best_epoch
-
-if __name__ == "__main__":
-    import argparse
+    # Test model if test data is available
+    if hasattr(data_module, 'test_dataloader') and data_module.test_dataloader() is not None:
+        logger.info("Testing model...")
+        trainer.test(lightning_model, data_module)
     
-    parser = argparse.ArgumentParser(description='Train glaucoma detection model')
-    parser.add_argument('--train_csv', type=str, required=True, help='Path to training CSV file')
-    parser.add_argument('--val_csv', type=str, required=True, help='Path to validation CSV file')
-    parser.add_argument('--output_dir', type=str, default='output', help='Directory to save outputs')
-    
-    args = parser.parse_args()
-    
-    main(args.train_csv, args.val_csv, checkpoint_dir=args.output_dir)
+    logger.info("Training completed")
+    return lightning_model, trainer

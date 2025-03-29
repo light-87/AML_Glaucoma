@@ -52,19 +52,19 @@ class GlaucomaSegmentationModel(pl.LightningModule):
         elif loss_type == 'focal':
             return smp.losses.FocalLoss(mode='binary')
         elif loss_type == 'bce':
-            return nn.BCELoss()
+            return nn.BCEWithLogitsLoss()  # Changed from BCELoss to BCEWithLogitsLoss
         elif loss_type == 'combined':
             # Combine BCE and Dice loss
-            return smp.losses.DiceLoss(mode='binary') + nn.BCELoss()
+            return smp.losses.DiceLoss(mode='binary') + nn.BCEWithLogitsLoss()  # Changed here too
         else:
             logger.warning(f"Unknown loss function: {loss_type}. Using combined loss.")
-            return smp.losses.DiceLoss(mode='binary') + nn.BCELoss()
+            return smp.losses.DiceLoss(mode='binary') + nn.BCEWithLogitsLoss()  # And here
     
     def _get_metrics(self):
         """Get metrics for evaluation."""
         metrics = torchmetrics.MetricCollection({
-            'dice': BinaryJaccardIndex(),  # Dice coefficient is same as IoU for binary case
-            'f1': BinaryF1Score(),
+            'iou': BinaryJaccardIndex(),  # IoU/Jaccard Index
+            'dice': BinaryF1Score(),      # Dice coefficient is F1 for binary case
             'accuracy': BinaryAccuracy(),
             'mse': MeanSquaredError()
         })

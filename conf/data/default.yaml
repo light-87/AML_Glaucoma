@@ -1,3 +1,28 @@
-paths:
-  data_dir: C:\Users\vaibh\Desktop\Surrey\AML\data
-  output_dir: C:\Users\vaibh\Desktop\Surrey\AML\AML_Glaucoma\output
+# Data configuration
+zip_file: null  # Path to ZIP file if extraction is needed
+random_state: 42
+
+# Dataset paths
+datasets:
+  ORIGA:
+    path: ${paths.data_dir}/ORIGA
+    metadata_file: OrigaList.csv
+    image_dir: Images
+    mask_dir: Masks
+  REFUGE:
+    path: ${paths.data_dir}/REFUGE
+    splits: [train, val, test]
+    metadata_file: index.json
+    image_dir: Images
+    mask_dir: Masks
+  G1020:
+    path: ${paths.data_dir}/G1020
+    metadata_file: G1020.csv
+    image_dir: Images
+    mask_dir: Masks
+
+# Split configuration
+split_config:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15

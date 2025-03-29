@@ -1,0 +1,8 @@
+2025-03-29 17:14:23,352 - __main__ - INFO - Configuration:
+- pipeline.steps=['extract', 'load']
+- pipeline.force=true
+
+2025-03-29 18:47:46,011 - __main__ - INFO - Configuration:
+- pipeline.steps=['extract', 'load']
+- pipeline.force=true
+

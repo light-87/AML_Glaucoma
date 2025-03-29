@@ -1,22 +1,20 @@
 """
-Data Loading & Extraction Module
-
-Simplified module leveraging pandas and pathlib.
+Fixed Data Loading Module specifically for your dataset structures.
 """
 
 import os
 import pandas as pd
 from pathlib import Path
 import zipfile
+import json
 from typing import Union, Dict, List, Optional
 import logging
 from tqdm import tqdm
-import json
 
 logger = logging.getLogger(__name__)
 
 def load_origa(dataset_path: str) -> pd.DataFrame:
-    """Load the ORIGA dataset."""
+    """Load the ORIGA dataset with specific handling for your file structure."""
     dataset_path = Path(dataset_path)
     metadata_file = dataset_path / "OrigaList.csv"
     images_dir = dataset_path / "Images"
@@ -35,112 +33,60 @@ def load_origa(dataset_path: str) -> pd.DataFrame:
     try:
         df = pd.read_csv(metadata_file)
         logger.info(f"Loaded ORIGA metadata with {len(df)} entries")
+        
+        # Add dataset source
+        df['dataset'] = 'ORIGA'
+        
+        # Use the 'Filename' column (note: capital F)
+        if 'Filename' in df.columns:
+            logger.info("Using 'Filename' column for image paths")
+            
+            # Extract the filename without extension if it has one
+            df['filename'] = df['Filename'].apply(
+                lambda x: x.split('.')[0] if '.' in x else x
+            )
+            
+            # Add paths to images and masks
+            # Note: From the test output, images end with .jpg and masks end with .png
+            df['image_path'] = df['filename'].apply(lambda x: str(images_dir / f"{x}.jpg"))
+            df['mask_path'] = df['filename'].apply(lambda x: str(masks_dir / f"{x}.png"))
+        else:
+            logger.error("'Filename' column not found in ORIGA metadata")
+            return pd.DataFrame()
+        
+        # Map glaucoma labels
+        if 'Glaucoma' in df.columns:
+            df['label'] = df['Glaucoma'].astype(int)
+        
+        # Validate that files exist
+        df['image_exists'] = df['image_path'].apply(os.path.exists)
+        df['mask_exists'] = df['mask_path'].apply(os.path.exists)
+        
+        missing_images = (~df['image_exists']).sum()
+        missing_masks = (~df['mask_exists']).sum()
+        
+        if missing_images > 0:
+            logger.warning(f"Found {missing_images} missing images in ORIGA dataset")
+        
+        if missing_masks > 0:
+            logger.warning(f"Found {missing_masks} missing masks in ORIGA dataset")
+        
+        # Keep only rows where both image and mask exist
+        valid_df = df[df['image_exists'] & df['mask_exists']].copy()
+        
+        # Drop temporary columns
+        valid_df = valid_df.drop(columns=['image_exists', 'mask_exists'])
+        
+        logger.info(f"ORIGA dataset loaded with {len(valid_df)} valid samples")
+        return valid_df
     except Exception as e:
         logger.error(f"Error loading ORIGA metadata: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
-    
-    # Add paths to images and masks
-    df['image_path'] = df['filename'].apply(lambda x: str(images_dir / f"{x}.jpg"))
-    df['mask_path'] = df['filename'].apply(lambda x: str(masks_dir / f"{x}_mask.png"))
-    
-    # Add dataset source
-    df['dataset'] = 'ORIGA'
-    
-    # Map glaucoma labels (if they exist)
-    if 'glaucoma' in df.columns:
-        df['label'] = df['glaucoma'].astype(int)
-    
-    # Validate that files exist
-    df['image_exists'] = df['image_path'].apply(os.path.exists)
-    df['mask_exists'] = df['mask_path'].apply(os.path.exists)
-    
-    missing_images = (~df['image_exists']).sum()
-    missing_masks = (~df['mask_exists']).sum()
-    
-    if missing_images > 0:
-        logger.warning(f"Found {missing_images} missing images in ORIGA dataset")
-    
-    if missing_masks > 0:
-        logger.warning(f"Found {missing_masks} missing masks in ORIGA dataset")
-    
-    # Keep only rows where both image and mask exist
-    valid_df = df[df['image_exists'] & df['mask_exists']].copy()
-    
-    # Drop temporary columns
-    valid_df = valid_df.drop(columns=['image_exists', 'mask_exists'])
-    
-    logger.info(f"ORIGA dataset loaded with {len(valid_df)} valid samples")
-    return valid_df
-
-def load_refuge(dataset_path: str) -> pd.DataFrame:
-    """Load the REFUGE dataset."""
-    dataset_path = Path(dataset_path)
-    splits = ["train", "val", "test"]
-    
-    all_data = []
-    
-    for split in splits:
-        split_dir = dataset_path / split
-        images_dir = split_dir / "Images"
-        masks_dir = split_dir / "Masks"
-        metadata_file = split_dir / "index.json"
-        
-        # Check if directories exist
-        if not split_dir.exists():
-            logger.warning(f"REFUGE {split} directory not found at {split_dir}")
-            continue
-        
-        if not images_dir.exists():
-            logger.warning(f"REFUGE {split} images directory not found at {images_dir}")
-            continue
-        
-        # Load metadata if available
-        metadata = {}
-        if metadata_file.exists():
-            try:
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-            except Exception as e:
-                logger.warning(f"Error loading REFUGE {split} metadata: {e}")
-        
-        # Get all image files
-        image_files = list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png"))
-        
-        # Create dataframe for this split
-        split_data = []
-        
-        for img_path in image_files:
-            img_name = img_path.stem
-            mask_path = masks_dir / f"{img_name}_mask.png"
-            
-            # Get label from metadata if available
-            label = -1  # Default unknown
-            if img_name in metadata and 'glaucoma' in metadata[img_name]:
-                label = int(metadata[img_name]['glaucoma'])
-            
-            split_data.append({
-                'filename': img_name,
-                'image_path': str(img_path),
-                'mask_path': str(mask_path) if mask_path.exists() else None,
-                'label': label,
-                'dataset': 'REFUGE',
-                'split': split
-            })
-        
-        all_data.extend(split_data)
-        logger.info(f"Loaded {len(split_data)} samples from REFUGE {split} split")
-    
-    # Create dataframe
-    df = pd.DataFrame(all_data)
-    
-    # Validate that files exist
-    valid_mask_count = df['mask_path'].apply(lambda x: x is not None and os.path.exists(x)).sum()
-    
-    logger.info(f"REFUGE dataset loaded with {len(df)} samples, {valid_mask_count} with valid masks")
-    return df
 
 def load_g1020(dataset_path: str) -> pd.DataFrame:
-    """Load the G1020 dataset."""
+    """Load the G1020 dataset specifically for your file structure."""
     dataset_path = Path(dataset_path)
     metadata_file = dataset_path / "G1020.csv"
     images_dir = dataset_path / "Images"
@@ -159,42 +105,151 @@ def load_g1020(dataset_path: str) -> pd.DataFrame:
     try:
         df = pd.read_csv(metadata_file)
         logger.info(f"Loaded G1020 metadata with {len(df)} entries")
+        
+        # Add dataset source
+        df['dataset'] = 'G1020'
+        
+        # Use the 'imageID' column 
+        if 'imageID' in df.columns:
+            logger.info("Using 'imageID' column for image paths")
+            
+            # Extract just the base filename without extension
+            df['filename'] = df['imageID'].apply(
+                lambda x: x.split('.')[0] if '.' in x else x
+            )
+            
+            # Add paths to images and masks - from test, we can see the masks are .png
+            df['image_path'] = df['filename'].apply(lambda x: str(images_dir / f"{x}.jpg"))
+            df['mask_path'] = df['filename'].apply(lambda x: str(masks_dir / f"{x}.png"))
+        else:
+            logger.error("'imageID' column not found in G1020 metadata")
+            return pd.DataFrame()
+        
+        # Map glaucoma labels
+        if 'binaryLabels' in df.columns:
+            df['label'] = df['binaryLabels'].astype(int)
+        
+        # Validate that files exist
+        df['image_exists'] = df['image_path'].apply(os.path.exists)
+        df['mask_exists'] = df['mask_path'].apply(os.path.exists)
+        
+        missing_images = (~df['image_exists']).sum()
+        missing_masks = (~df['mask_exists']).sum()
+        
+        if missing_images > 0:
+            logger.warning(f"Found {missing_images} missing images in G1020 dataset")
+        
+        if missing_masks > 0:
+            logger.warning(f"Found {missing_masks} missing masks in G1020 dataset")
+        
+        # Keep only rows where both image and mask exist
+        valid_df = df[df['image_exists'] & df['mask_exists']].copy()
+        
+        # Drop temporary columns
+        valid_df = valid_df.drop(columns=['image_exists', 'mask_exists'])
+        
+        logger.info(f"G1020 dataset loaded with {len(valid_df)} valid samples")
+        return valid_df
     except Exception as e:
         logger.error(f"Error loading G1020 metadata: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
+
+# Keep the REFUGE loader from the previous version since it's working
+def load_refuge(dataset_path: str) -> pd.DataFrame:
+    """Load the REFUGE dataset."""
+    dataset_path = Path(dataset_path)
+    splits = ["train", "val", "test"]
     
-    # Add paths to images and masks
-    df['image_path'] = df['ID'].apply(lambda x: str(images_dir / f"{x}.jpg"))
-    df['mask_path'] = df['ID'].apply(lambda x: str(masks_dir / f"{x}_mask.png"))
+    all_data = []
     
-    # Add dataset source
-    df['dataset'] = 'G1020'
+    for split in splits:
+        split_dir = dataset_path / split
+        
+        if not split_dir.exists():
+            logger.warning(f"REFUGE {split} directory not found at {split_dir}")
+            continue
+        
+        images_dir = split_dir / "Images"
+        if not images_dir.exists():
+            # Try looking for images directly in the split directory
+            images_dir = split_dir
+            logger.warning(f"No Images subdirectory found. Using {images_dir} instead.")
+        
+        masks_dir = split_dir / "Masks"
+        if not masks_dir.exists():
+            logger.warning(f"REFUGE {split} masks directory not found. Masks will be marked as missing.")
+        
+        metadata_file = split_dir / "index.json"
+        
+        # Load metadata if available
+        metadata = {}
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                logger.info(f"Loaded REFUGE {split} metadata with {len(metadata)} entries")
+            except Exception as e:
+                logger.warning(f"Error loading REFUGE {split} metadata: {e}")
+        
+        # Get all image files
+        image_extensions = ['.jpg', '.png', '.jpeg', '.tif']
+        image_files = []
+        for ext in image_extensions:
+            image_files.extend(list(images_dir.glob(f"*{ext}")))
+        
+        if not image_files:
+            logger.warning(f"No image files found in {images_dir}")
+            continue
+        
+        logger.info(f"Found {len(image_files)} images in REFUGE {split} split")
+        
+        # Create dataframe for this split
+        split_data = []
+        
+        for img_path in image_files:
+            img_name = img_path.stem
+            
+            # Look for mask with various possible naming patterns
+            mask_patterns = [
+                masks_dir / f"{img_name}_mask.png",
+                masks_dir / f"{img_name}.png",
+                masks_dir / f"{img_name}_segmentation.png",
+                masks_dir / f"{img_name}_gt.png"
+            ]
+            
+            mask_path = None
+            for pattern in mask_patterns:
+                if pattern.exists():
+                    mask_path = str(pattern)
+                    break
+            
+            # Get label from metadata if available
+            label = -1  # Default unknown
+            if img_name in metadata and 'glaucoma' in metadata[img_name]:
+                label = int(metadata[img_name]['glaucoma'])
+            
+            split_data.append({
+                'filename': img_name,
+                'image_path': str(img_path),
+                'mask_path': mask_path,
+                'label': label,
+                'dataset': 'REFUGE',
+                'split': split
+            })
+        
+        all_data.extend(split_data)
+        logger.info(f"Added {len(split_data)} samples from REFUGE {split} split")
     
-    # Map glaucoma labels (if they exist)
-    if 'Glaucoma' in df.columns:
-        df['label'] = df['Glaucoma'].astype(int)
+    # Create dataframe
+    df = pd.DataFrame(all_data)
     
     # Validate that files exist
-    df['image_exists'] = df['image_path'].apply(os.path.exists)
-    df['mask_exists'] = df['mask_path'].apply(os.path.exists)
+    valid_mask_count = df['mask_path'].apply(lambda x: x is not None and os.path.exists(x)).sum()
     
-    missing_images = (~df['image_exists']).sum()
-    missing_masks = (~df['mask_exists']).sum()
-    
-    if missing_images > 0:
-        logger.warning(f"Found {missing_images} missing images in G1020 dataset")
-    
-    if missing_masks > 0:
-        logger.warning(f"Found {missing_masks} missing masks in G1020 dataset")
-    
-    # Keep only rows where both image and mask exist
-    valid_df = df[df['image_exists'] & df['mask_exists']].copy()
-    
-    # Drop temporary columns
-    valid_df = valid_df.drop(columns=['image_exists', 'mask_exists'])
-    
-    logger.info(f"G1020 dataset loaded with {len(valid_df)} valid samples")
-    return valid_df
+    logger.info(f"REFUGE dataset loaded with {len(df)} samples, {valid_mask_count} with valid masks")
+    return df
 
 def save_consolidated_dataset(df: pd.DataFrame, output_path: str) -> bool:
     """Save the consolidated dataset to a CSV file."""
@@ -245,8 +300,6 @@ def load_dataset(dataset_type: str, dataset_path: str) -> pd.DataFrame:
     else:
         logger.error(f"Unknown dataset type: {dataset_type}")
         return pd.DataFrame()
-
-# Simplified versions of load_origa, load_refuge, load_g1020 functions...
 
 def consolidate_datasets(base_path: str) -> pd.DataFrame:
     """Consolidate all datasets from the given base path."""

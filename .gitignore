@@ -55,7 +55,7 @@ venv/
 ENV/
 
 # Data and outputs
-# data/
+data/
 # output/
 # logs/
 # models/

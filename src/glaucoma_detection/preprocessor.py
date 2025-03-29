@@ -99,7 +99,9 @@ class GlaucomaDataset(Dataset):
         # Apply transforms
         if self.transforms:
             if self.mode == 'segmentation':
-                transformed = self.transforms(image=image, mask=mask[0])
+                # For segmentation, we need to ensure mask is 2D for albumentations
+                mask_2d = mask[0]  # Get the first channel (remove channel dimension)
+                transformed = self.transforms(image=image, mask=mask_2d)
                 image = transformed["image"]
                 mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
             else:

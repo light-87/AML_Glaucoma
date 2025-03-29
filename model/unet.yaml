@@ -1,6 +1,0 @@
-# Model configuration
-architecture: unet
-encoder: resnet34  # Backbone encoder
-pretrained: true  # Use pretrained weights
-in_channels: 3  # RGB input
-num_classes: 1  # Binary segmentation

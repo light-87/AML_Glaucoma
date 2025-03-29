@@ -82,6 +82,7 @@ def run_with_hydra(cfg: DictConfig) -> None:
             return
     
     # Clean data if requested
+    # Clean data if requested
     if "clean" in steps:
         cleaned_df = clean_dataset(df, random_state=cfg.data.random_state)
         cleaned_csv = output_dir / "cleaned_glaucoma_dataset.csv"
@@ -93,6 +94,21 @@ def run_with_hydra(cfg: DictConfig) -> None:
         if cleaned_csv.exists():
             cleaned_df = pd.read_csv(cleaned_csv)
             logger.info(f"Loaded cleaned dataset from {cleaned_csv}")
+            
+            # Validate the dataset structure
+            required_columns = ['image_path']
+            missing_columns = [col for col in required_columns if col not in cleaned_df.columns]
+            
+            if missing_columns:
+                logger.error(f"Loaded dataset is missing required columns: {missing_columns}")
+                logger.error("Falling back to consolidated dataset")
+                cleaned_df = df
+            
+            # Check if there's sufficient data
+            if len(cleaned_df) == 0:
+                logger.error("Loaded cleaned dataset is empty")
+                logger.error("Falling back to consolidated dataset")
+                cleaned_df = df
         else:
             logger.warning("No cleaned dataset found. Using consolidated dataset.")
             cleaned_df = df

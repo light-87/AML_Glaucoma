@@ -340,6 +340,9 @@ class MemoryEfficientDataset(Dataset):
             # Normalize to 0-1 range if needed
             if mask.max() > 1:
                 mask = mask / 255.0
+                
+            # Ensure mask is binary (this is the key fix)
+            mask = (mask > 0.5).astype(np.float32)
             
             # Resize efficiently
             mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
@@ -352,14 +355,6 @@ class MemoryEfficientDataset(Dataset):
             logger.error(f"Error loading mask {mask_path}: {str(e)}", exc_info=True)
             # Return a blank mask in case of error
             return np.zeros((1, self.target_size[1], self.target_size[0]), dtype=np.float32)
-    
-    def __len__(self) -> int:
-        """Get the length of the dataset.
-        
-        Returns:
-            Number of items in the dataset
-        """
-        return len(self.data)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get a sample from the dataset.
@@ -383,6 +378,8 @@ class MemoryEfficientDataset(Dataset):
                 transformed = self.transforms(image=image, mask=mask_2d)
                 image = transformed["image"]  # This is now a torch tensor
                 mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
+                # Ensure mask remains binary after transforms (this is important)
+                mask = (mask > 0.5).float()
             
             return image, mask
         else:

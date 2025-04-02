@@ -1,7 +1,7 @@
 """
-Preprocessing Module
+Fixed Preprocessing Module
 
-Enhanced preprocessing with PyTorch Lightning and Albumentations.
+Enhanced preprocessing with PyTorch Lightning and Albumentations, ensuring binary masks.
 """
 
 import os
@@ -82,6 +82,8 @@ class GlaucomaDataset(Dataset):
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             # Normalize mask to 0-1 range
             mask = mask / 255.0 if mask.max() > 1 else mask
+            # Ensure mask is binary (this is the key fix)
+            mask = (mask > 0.5).astype(np.float32)
             # Resize mask to target size
             mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
             mask = np.expand_dims(mask, axis=0)  # Add channel dimension for masks
@@ -104,6 +106,8 @@ class GlaucomaDataset(Dataset):
                 transformed = self.transforms(image=image, mask=mask_2d)
                 image = transformed["image"]
                 mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
+                # Ensure mask remains binary after transforms
+                mask = (mask > 0.5).float()
             else:
                 transformed = self.transforms(image=image)
                 image = transformed["image"]
@@ -111,6 +115,7 @@ class GlaucomaDataset(Dataset):
         
         return image, mask
 
+# Rest of the file remains the same
 class GlaucomaDataModule(pl.LightningDataModule):
     """PyTorch Lightning DataModule for Glaucoma datasets."""
     
@@ -124,12 +129,12 @@ class GlaucomaDataModule(pl.LightningDataModule):
              val_split: float = 0.15,
              test_split: float = 0.15,
              random_state: int = 42,
-             use_memory_efficient: bool = False,  # New parameter
-             cache_dir: Optional[str] = None,     # New parameter
-             use_existing_splits: bool = False,   # New parameter
-             train_df: Optional[pd.DataFrame] = None,  # New parameter
-             val_df: Optional[pd.DataFrame] = None,    # New parameter
-             test_df: Optional[pd.DataFrame] = None):  # New parameter
+             use_memory_efficient: bool = False,
+             cache_dir: Optional[str] = None,
+             use_existing_splits: bool = False,
+             train_df: Optional[pd.DataFrame] = None,
+             val_df: Optional[pd.DataFrame] = None,
+             test_df: Optional[pd.DataFrame] = None):
         
         """Initialize the data module."""
         super().__init__()

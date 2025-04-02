@@ -74,7 +74,11 @@ class SegmentationEvaluator:
                 
                 # Store predictions and targets
                 all_preds.append(outputs.cpu())
-                all_targets.append(masks.cpu())
+                
+                # Ensure masks are binary for metrics calculation
+                binary_masks = (masks > 0.5).float()
+                all_targets.append(binary_masks.cpu())
+                
                 all_images.append(images.cpu())
         
         # Concatenate results
@@ -82,8 +86,11 @@ class SegmentationEvaluator:
         all_targets = torch.cat(all_targets, dim=0)
         all_images = torch.cat(all_images, dim=0)
         
-        # Calculate metrics
-        metrics_result = self.metrics(all_preds, all_targets)
+        # Apply threshold to predictions for binary evaluation
+        binary_preds = (all_preds > self.threshold).float()
+        
+        # Calculate metrics using binary predictions and targets
+        metrics_result = self.metrics(binary_preds, all_targets)
         
         # Calculate ROC curve
         fpr, tpr, thresholds = self.roc(all_preds, all_targets)
@@ -94,7 +101,7 @@ class SegmentationEvaluator:
         pr_auc = torch.trapz(precision, recall).item()
         
         # Calculate confusion matrix
-        cm = self.confusion_matrix(all_preds, all_targets)
+        cm = self.confusion_matrix(binary_preds, all_targets)
         tn, fp, fn, tp = cm.flatten().tolist()
         
         # Compile results
@@ -110,7 +117,7 @@ class SegmentationEvaluator:
         }
         
         # Generate visualizations
-        self._generate_visualizations(all_images, all_preds, all_targets, fpr, tpr, precision, recall)
+        self._generate_visualizations(all_images, binary_preds, all_targets, fpr, tpr, precision, recall)
         
         # Save results
         self._save_results(results)

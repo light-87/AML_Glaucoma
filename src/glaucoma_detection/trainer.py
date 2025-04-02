@@ -1,7 +1,7 @@
 """
-Training Module
+Modified Trainer Module with Fixed Loss Function
 
-PyTorch Lightning implementation for training segmentation models.
+This version fixes the issue with combined loss functions.
 """
 
 import os
@@ -20,6 +20,22 @@ from torchmetrics.classification import BinaryJaccardIndex, BinaryF1Score, Binar
 from torchmetrics.regression import MeanSquaredError
 
 logger = logging.getLogger(__name__)
+
+# Custom Combined Loss Class
+class CombinedLoss(nn.Module):
+    """Combined loss function that adds Dice and BCE losses."""
+    
+    def __init__(self, mode='binary'):
+        """Initialize with the specified mode."""
+        super().__init__()
+        self.dice_loss = smp.losses.DiceLoss(mode=mode)
+        self.bce_loss = nn.BCEWithLogitsLoss()
+    
+    def forward(self, y_pred, y_true):
+        """Compute the combined loss."""
+        dice = self.dice_loss(y_pred, y_true)
+        bce = self.bce_loss(y_pred, y_true)
+        return dice + bce
 
 class GlaucomaSegmentationModel(pl.LightningModule):
     """PyTorch Lightning module for glaucoma segmentation."""
@@ -52,13 +68,13 @@ class GlaucomaSegmentationModel(pl.LightningModule):
         elif loss_type == 'focal':
             return smp.losses.FocalLoss(mode='binary')
         elif loss_type == 'bce':
-            return nn.BCEWithLogitsLoss()  # Changed from BCELoss to BCEWithLogitsLoss
+            return nn.BCEWithLogitsLoss()
         elif loss_type == 'combined':
-            # Combine BCE and Dice loss
-            return smp.losses.DiceLoss(mode='binary') + nn.BCEWithLogitsLoss()  # Changed here too
+            # Use our custom combined loss
+            return CombinedLoss(mode='binary')
         else:
             logger.warning(f"Unknown loss function: {loss_type}. Using combined loss.")
-            return smp.losses.DiceLoss(mode='binary') + nn.BCEWithLogitsLoss()  # And here
+            return CombinedLoss(mode='binary')
     
     def _get_metrics(self):
         """Get metrics for evaluation."""

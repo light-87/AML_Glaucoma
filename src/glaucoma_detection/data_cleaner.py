@@ -4,11 +4,11 @@ Data Cleaning Module
 Simplified data cleaning leveraging pandas features.
 """
 
+import os  # Add this import
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 import logging
-from typing import Tuple, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,13 @@ def clean_dataset(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
     # Make a copy to avoid modifying the input DataFrame
     cleaned_df = df.copy()
     
+    # Check for duplicate image paths and remove them
+    if 'image_path' in cleaned_df.columns:
+        duplicates = cleaned_df['image_path'].duplicated(keep='first')
+        if duplicates.any():
+            logger.warning(f"Found {duplicates.sum()} duplicate image paths")
+            cleaned_df = cleaned_df[~duplicates].reset_index(drop=True)
+    
     # Add source column if not present based on dataset column
     if 'source' not in cleaned_df.columns and 'dataset' in cleaned_df.columns:
         cleaned_df['source'] = cleaned_df['dataset'].str.lower()
@@ -192,6 +199,10 @@ def clean_dataset(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
             cleaned_df = cleaned_df.drop(columns=['has_glaucoma'])
             logger.info("Removed redundant 'has_glaucoma' column")
     
+    # Set mode to segmentation if not present
+    if 'mode' not in cleaned_df.columns:
+        cleaned_df['mode'] = 'segmentation'
+    
     # Validate dataset
     validation_result = validate_dataset(cleaned_df)
     if not validation_result:
@@ -199,5 +210,3 @@ def clean_dataset(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
     
     logger.info(f"Cleaning complete. Final shape: {cleaned_df.shape}")
     return cleaned_df
-
-# Simplified versions of helper functions...

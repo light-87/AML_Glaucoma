@@ -1,0 +1,30 @@
+epochs: 10
+batch_size: 8
+num_workers: 4
+learning_rate: 0.001
+optimizer: adam
+loss_function: combined
+precision: 32-true
+use_gpu: true
+gpu_ids:
+- 0
+gradient_clip_val: 0.0
+accumulate_grad_batches: 1
+lr_scheduler:
+  enabled: true
+  factor: 0.1
+  patience: 5
+  min_lr: 1.0e-06
+  monitor: val_loss
+early_stopping:
+  enabled: true
+  patience: 10
+  monitor: val_loss
+  min_delta: 0.001
+  mode: min
+checkpointing:
+  enabled: true
+  save_top_k: 3
+  monitor: val_loss
+  mode: min
+use_class_weights: true

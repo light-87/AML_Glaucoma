@@ -1,7 +1,7 @@
 """
-Fixed Preprocessing Module
+Preprocessing Module
 
-Enhanced preprocessing with PyTorch Lightning and Albumentations, ensuring binary masks.
+Enhanced preprocessing with PyTorch Lightning and Albumentations.
 """
 
 import os
@@ -47,11 +47,14 @@ class GlaucomaDataset(Dataset):
         
         if augment:
             return A.Compose([
-                A.RandomRotate90(),
-                A.Flip(),
-                A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=15),
-                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2),
-                A.GaussianBlur(blur_limit=(3, 5)),
+                # Use correct Albumentations transforms
+                A.RandomRotate90(p=0.5),
+                A.HorizontalFlip(p=0.5),  # Replace Flip() with HorizontalFlip()
+                A.VerticalFlip(p=0.5),    # Add VerticalFlip if needed
+                A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=15, p=0.5),
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+                A.GaussNoise(var_limit=(0.0, 0.05), p=0.5),
+                A.GaussianBlur(blur_limit=(3, 5), p=0.5),
                 A.Normalize(mean=mean, std=std) if mean else A.Normalize(),
                 ToTensorV2()
             ])
@@ -65,6 +68,16 @@ class GlaucomaDataset(Dataset):
         """Get the length of the dataset."""
         return len(self.data)
     
+    def _process_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Ensure mask is binary (0 or 1)."""
+        # Normalize to 0-1 range
+        if mask.max() > 1:
+            mask = mask / 255.0
+        
+        # Threshold to create binary mask
+        mask = (mask > 0.5).astype(np.float32)
+        
+        return mask
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get a sample from the dataset."""
@@ -80,13 +93,15 @@ class GlaucomaDataset(Dataset):
         # Load mask if available
         if mask_path and os.path.exists(mask_path) and self.mode == 'segmentation':
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            # Normalize mask to 0-1 range
-            mask = mask / 255.0 if mask.max() > 1 else mask
-            # Ensure mask is binary (this is the key fix)
-            mask = (mask > 0.5).astype(np.float32)
+            
             # Resize mask to target size
             mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
-            mask = np.expand_dims(mask, axis=0)  # Add channel dimension for masks
+            
+            # Process mask to ensure binary values
+            mask = self._process_mask(mask)
+            
+            # Add channel dimension for masks
+            mask = np.expand_dims(mask, axis=0)
         elif self.mode == 'classification' and 'label' in row:
             # For classification, use label as target
             label = int(row['label'])
@@ -106,7 +121,8 @@ class GlaucomaDataset(Dataset):
                 transformed = self.transforms(image=image, mask=mask_2d)
                 image = transformed["image"]
                 mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
-                # Ensure mask remains binary after transforms
+                
+                # Ensure binary mask after transforms
                 mask = (mask > 0.5).float()
             else:
                 transformed = self.transforms(image=image)
@@ -114,8 +130,7 @@ class GlaucomaDataset(Dataset):
                 mask = torch.tensor(mask, dtype=torch.float32)
         
         return image, mask
-
-# Rest of the file remains the same
+    
 class GlaucomaDataModule(pl.LightningDataModule):
     """PyTorch Lightning DataModule for Glaucoma datasets."""
     

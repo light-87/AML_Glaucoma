@@ -10,6 +10,7 @@ import json
 from typing import Union, Dict, List, Optional
 import logging
 from tqdm import tqdm
+from glaucoma_detection.path_utils import PathManager
 
 logger = logging.getLogger(__name__)
 
@@ -300,21 +301,33 @@ def load_dataset(dataset_type: str, dataset_path: str) -> pd.DataFrame:
     else:
         logger.error(f"Unknown dataset type: {dataset_type}")
         return pd.DataFrame()
-
+    
 def consolidate_datasets(base_path: str) -> pd.DataFrame:
-    """Consolidate all datasets from the given base path."""
+    """Consolidate all datasets from the given base path or package path."""
     datasets = ["ORIGA", "REFUGE", "G1020"]
     all_data = pd.DataFrame()
     
-    for dataset in datasets:
-        dataset_path = os.path.join(base_path, dataset)
-        if os.path.exists(dataset_path):
-            df = load_dataset(dataset, dataset_path)
-            if not df.empty:
-                all_data = pd.concat([all_data, df], ignore_index=True)
-                logger.info(f"Added {len(df)} {dataset} images")
-        else:
-            logger.warning(f"{dataset} dataset not found at {dataset_path}")
+    # First, try to get paths from PathManager to handle both locations
+    path_manager = PathManager(os.path.dirname(base_path))
     
-    logger.info(f"Consolidation complete. Total images: {len(all_data)}")
+    for dataset in datasets:
+        try:
+            # Get dataset path from PathManager (handles both locations)
+            dataset_path = path_manager.get_dataset_path(dataset)
+            if os.path.exists(dataset_path):
+                df = load_dataset(dataset, str(dataset_path))
+                if not df.empty:
+                    all_data = pd.concat([all_data, df], ignore_index=True)
+                    logger.info(f"Added {len(df)} {dataset} images")
+            else:
+                logger.warning(f"{dataset} dataset not found at {dataset_path}")
+        except Exception as e:
+            logger.warning(f"Error loading {dataset} dataset: {str(e)}")
+    
+    # Check if we found any data
+    if all_data.empty:
+        logger.error("No data loaded from any dataset")
+    else:
+        logger.info(f"Consolidation complete. Total images: {len(all_data)}")
+        
     return all_data

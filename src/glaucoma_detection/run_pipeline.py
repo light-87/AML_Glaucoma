@@ -1,7 +1,7 @@
 """
-Enhanced Pipeline Coordinator
+Pipeline Coordinator - Hydra-only version
 
-Improved pipeline coordination with robust error handling, validation, and memory efficiency.
+Simplified pipeline coordination with Hydra configuration management.
 """
 
 import os
@@ -9,7 +9,6 @@ import logging
 import datetime
 import uuid
 from pathlib import Path
-import typer
 import pandas as pd
 import torch
 import pytorch_lightning as pl
@@ -20,9 +19,9 @@ import traceback
 import sys
 import gc
 
-# Import enhanced project modules
+# Import project modules
 from glaucoma_detection.logger import get_logger, ERROR_CODES, log_exception_handler
-from glaucoma_detection.path_utils import get_path_manager, PathManager
+from glaucoma_detection.path_utils import PathManager
 from glaucoma_detection.data_validator import DataValidator
 from glaucoma_detection.config_validator import validate_config
 from glaucoma_detection.memory_efficient_loader import create_memory_efficient_data_loader, memory_stats
@@ -35,17 +34,14 @@ from glaucoma_detection.model import create_model, save_model, load_model
 from glaucoma_detection.trainer import GlaucomaSegmentationModel, train_model
 from glaucoma_detection.evaluator import SegmentationEvaluator
 
-# Create Typer app
-app = typer.Typer(help="Enhanced Glaucoma Detection Pipeline")
-
 # Initialize logger
 logger = get_logger("pipeline")
 
 # Define the main function to be used with Hydra
-@hydra.main(config_path="../conf", config_name="config", version_base=None)
+@hydra.main(config_path="../../../conf", config_name="config", version_base=None)
 @log_exception_handler
-def run_with_hydra(cfg: DictConfig) -> None:
-    """Main entry point for the pipeline using Hydra with enhanced error handling.
+def run_pipeline(cfg: DictConfig) -> None:
+    """Main entry point for the pipeline using Hydra.
     
     Args:
         cfg: Configuration from Hydra
@@ -75,7 +71,7 @@ def run_with_hydra(cfg: DictConfig) -> None:
     run_timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     # Initialize path manager
-    path_manager = get_path_manager(cfg.paths.base_dir)
+    path_manager = path_manager.get_dataset_path(cfg.paths.base_dir)
     
     # Set up output directories
     output_dir = Path(cfg.paths.output_dir)
@@ -126,54 +122,92 @@ def run_with_hydra(cfg: DictConfig) -> None:
                 step_results['extract'] = {'status': 'skipped'}
         
         # STEP 2: Load data if requested
+        # STEP 2: Load data if requested
         consolidated_df = None
         if "load" in steps:
             logger.info("STEP 2: LOADING DATA")
             
+            # Create path manager with current configuration
+            path_manager = path_manager.get_dataset_path(cfg.paths.base_dir)
+            
+            # Log the actual dataset paths that will be used
+            for dataset_name in ["ORIGA", "REFUGE", "G1020"]:
+                try:
+                    dataset_path = path_manager.get_dataset_path(dataset_name)
+                    logger.info(f"Dataset {dataset_name} location: {dataset_path}")
+                except (ValueError, FileNotFoundError) as e:
+                    logger.warning(f"Dataset {dataset_name} issue: {str(e)}")
+            
             # Validate dataset structure before loading
             validator = DataValidator(path_manager)
             dataset_validation = {}
+            valid_datasets = []
+            
             for dataset_name in ["ORIGA", "REFUGE", "G1020"]:
-                validation_result = validator.validate_dataset_structure(dataset_name)
-                dataset_validation[dataset_name] = validation_result
-                
-                if validation_result['valid']:
-                    logger.info(f"Dataset {dataset_name} structure validated successfully")
-                else:
-                    logger.warning(f"Dataset {dataset_name} validation issues: {validation_result['issues']}")
+                try:
+                    validation_result = validator.validate_dataset_structure(dataset_name)
+                    dataset_validation[dataset_name] = validation_result
+                    
+                    if validation_result['valid']:
+                        logger.info(f"Dataset {dataset_name} structure validated successfully")
+                        valid_datasets.append(dataset_name)
+                    else:
+                        logger.warning(f"Dataset {dataset_name} validation issues: {validation_result['issues']}")
+                except Exception as e:
+                    logger.warning(f"Error validating {dataset_name}: {str(e)}")
+            
+            if not valid_datasets:
+                logger.error("No valid datasets found for loading", error_code=ERROR_CODES['DATA_LOAD_ERROR'])
+                step_results['load'] = {'status': 'failed', 'error': 'No valid datasets found'}
+                raise ValueError("No valid datasets found. Please check dataset paths and structure.")
+            
+            # Log which datasets will be loaded
+            logger.info(f"Attempting to load the following datasets: {', '.join(valid_datasets)}")
             
             # Load data
-            consolidated_df = consolidate_datasets(cfg.paths.data_dir)
-            
-            if consolidated_df.empty:
-                logger.error("Failed to load any data", error_code=ERROR_CODES['DATA_LOAD_ERROR'])
-                step_results['load'] = {'status': 'failed', 'error': 'No data loaded'}
-                raise ValueError("No data loaded from datasets")
-            
-            # Save consolidated dataset
-            consolidated_csv = run_output_dir / "consolidated_dataset.csv"
-            save_consolidated_dataset(consolidated_df, str(consolidated_csv))
-            logger.info(f"Saved consolidated dataset with {len(consolidated_df)} samples to {consolidated_csv}")
-            
-            # Validate the loaded dataset
-            df_validation = validator.validate_dataframe(consolidated_df, mode=cfg.preprocessing.mode)
-            
-            if not df_validation['valid']:
-                logger.warning(f"Dataset validation issues: {df_validation['issues']}")
-                if len(df_validation['issues']) > 0:
-                    logger.warning("Attempting to continue despite validation issues")
-            
-            # Generate and save validation report
-            validation_report = validator.generate_validation_report(
-                consolidated_df, 
-                output_path=run_output_dir / "dataset_validation.json"
-            )
-            
-            step_results['load'] = {
-                'status': 'success', 
-                'samples': len(consolidated_df),
-                'validation': df_validation['valid']
-            }
+            try:
+                consolidated_df = consolidate_datasets(cfg.paths.data_dir)
+                
+                if consolidated_df.empty:
+                    logger.error("Failed to load any data from datasets", error_code=ERROR_CODES['DATA_LOAD_ERROR'])
+                    step_results['load'] = {'status': 'failed', 'error': 'No data loaded'}
+                    raise ValueError("No data loaded from datasets. Check log for details.")
+                
+                logger.info(f"Successfully loaded {len(consolidated_df)} samples from datasets")
+                
+                # Log dataset distribution if available
+                if 'dataset' in consolidated_df.columns:
+                    dataset_counts = consolidated_df['dataset'].value_counts().to_dict()
+                    logger.info(f"Dataset distribution: {dataset_counts}")
+                
+                # Save consolidated dataset
+                consolidated_csv = run_output_dir / "consolidated_dataset.csv"
+                save_consolidated_dataset(consolidated_df, str(consolidated_csv))
+                logger.info(f"Saved consolidated dataset to {consolidated_csv}")
+                
+                # Validate the loaded dataset
+                df_validation = validator.validate_dataframe(consolidated_df, mode=cfg.preprocessing.mode)
+                
+                if not df_validation['valid']:
+                    logger.warning(f"Dataset validation issues: {df_validation['issues']}")
+                    if len(df_validation['issues']) > 0:
+                        logger.warning("Attempting to continue despite validation issues")
+                
+                # Generate and save validation report
+                validation_report = validator.generate_validation_report(
+                    consolidated_df, 
+                    output_path=run_output_dir / "dataset_validation.json"
+                )
+                
+                step_results['load'] = {
+                    'status': 'success', 
+                    'samples': len(consolidated_df),
+                    'validation': df_validation['valid']
+                }
+            except Exception as e:
+                logger.error(f"Error loading datasets: {str(e)}", error_code=ERROR_CODES['DATA_LOAD_ERROR'], exc_info=True)
+                step_results['load'] = {'status': 'failed', 'error': str(e)}
+                raise ValueError(f"Failed to load datasets: {str(e)}")
         else:
             # Try to load existing consolidated dataset
             consolidated_csv = output_dir / "consolidated_dataset.csv"
@@ -582,291 +616,13 @@ def run_with_hydra(cfg: DictConfig) -> None:
             steps_str = ", ".join(steps)
             f.write(f"| {run_id[:8]} | {run_timestamp} | {steps_str} | failed | {description} | {run_time} |\n")
         
-        # Re-raise the exception for Hydra
+        # Re-raise the exception
         raise
 
-# Define Typer CLI command that uses Hydra under the hood
-@app.command()
-def run(
-    config_path: str = typer.Option(None, "--config", "-c", help="Path to config file"),
-    steps: str = typer.Option("extract,load,clean,preprocess,train,evaluate", "--steps", "-s", 
-                             help="Comma-separated list of steps to run"),
-    output_dir: str = typer.Option(None, "--output-dir", "-o", help="Output directory"),
-    data_dir: str = typer.Option(None, "--data-dir", "-d", help="Data directory"),
-    zip_file: str = typer.Option(None, "--zip-file", "-z", help="Path to ZIP file"),
-    force: bool = typer.Option(False, "--force", "-f", help="Force rerun of all steps"),
-    description: str = typer.Option("", "--description", help="Run description"),
-    wandb_logging: bool = typer.Option(False, "--wandb", help="Enable Weights & Biases logging"),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug mode with detailed logging")
-):
-    """Run the pipeline with specified steps and enhanced error handling."""
-    # Configure logging level
-    if debug:
-        logger.logger.setLevel(logging.DEBUG)
-        logger.info("Debug mode enabled")
-    
-    # Build command-line arguments for hydra
-    argv = []
-    
-    # Add explicit overrides
-    if steps:
-        step_list = steps.split(',')
-        argv.append(f"pipeline.steps={step_list}")
-    
-    if output_dir:
-        argv.append(f"paths.output_dir={output_dir}")
-    
-    if data_dir:
-        argv.append(f"paths.data_dir={data_dir}")
-    
-    if zip_file:
-        argv.append(f"data.zip_file={zip_file}")
-    
-    if force:
-        argv.append("pipeline.force=true")
-    
-    if description:
-        argv.append(f"pipeline.description='{description}'")
-    
-    if wandb_logging:
-        argv.append("logging.use_wandb=true")
-    
-    # Handle custom config file
-    if config_path:
-        # Use the provided config file
-        argv.append(f"--config-path={os.path.dirname(config_path)}")
-        argv.append(f"--config-name={os.path.basename(config_path).split('.')[0]}")
-    
-    # Call hydra's main function with our arguments
-    try:
-        run_with_hydra(argv)
-    except Exception as e:
-        logger.critical(f"Pipeline execution failed: {e}", exc_info=True)
-        sys.exit(1)
-
-# Add additional CLI commands
-@app.command()
-def validate_data(
-    data_dir: str = typer.Option("./data", "--data-dir", "-d", help="Data directory"),
-    output_file: str = typer.Option("./validation_report.json", "--output", "-o", help="Output file")
-):
-    """Validate the datasets and generate a report."""
-    try:
-        # Initialize path manager
-        path_manager = get_path_manager(os.path.dirname(data_dir))
-        
-        # Initialize validator
-        validator = DataValidator(path_manager)
-        
-        # Validate each dataset
-        results = {}
-        for dataset_name in ["ORIGA", "REFUGE", "G1020"]:
-            logger.info(f"Validating {dataset_name} dataset structure")
-            results[dataset_name] = validator.validate_dataset_structure(dataset_name)
-        
-        # Load consolidated dataset if available
-        consolidated_path = os.path.join(os.path.dirname(data_dir), "output", "consolidated_dataset.csv")
-        if os.path.exists(consolidated_path):
-            logger.info(f"Loading consolidated dataset from {consolidated_path}")
-            df = pd.read_csv(consolidated_path)
-            
-            # Validate dataframe
-            results["consolidated"] = validator.validate_dataframe(df)
-            
-            # Generate full validation report
-            report = validator.generate_validation_report(df, output_path=output_file)
-            logger.info(f"Validation report saved to {output_file}")
-        else:
-            # Save basic results
-            import json
-            with open(output_file, 'w') as f:
-                json.dump(results, f, indent=2)
-            logger.info(f"Basic validation results saved to {output_file}")
-        
-        logger.info("Data validation completed")
-        
-    except Exception as e:
-        logger.critical(f"Data validation failed: {e}", exc_info=True)
-        sys.exit(1)
-
-@app.command()
-def generate_docs(
-    output_dir: str = typer.Option("./docs", "--output-dir", "-o", help="Output directory")
-):
-    """Generate configuration documentation."""
-    try:
-        from glaucoma_detection.config_validator import ConfigValidator
-        
-        # Create output directory
-        output_dir = Path(output_dir)
-        output_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Initialize config validator
-        validator = ConfigValidator()
-        
-        # Generate Markdown documentation
-        md_path = output_dir / "config_schema.md"
-        validator.generate_schema_documentation(md_path)
-        logger.info(f"Configuration schema documentation saved to {md_path}")
-        
-        # Export schema as JSON
-        json_path = output_dir / "config_schema.json"
-        validator.export_schema_as_json(json_path)
-        logger.info(f"Configuration schema exported to {json_path}")
-        
-        # Generate example configuration
-        example_config = validator.fill_defaults({})
-        example_config_path = output_dir / "example_config.yaml"
-        
-        with open(example_config_path, 'w') as f:
-            import yaml
-            yaml.dump(example_config, f, default_flow_style=False)
-        
-        logger.info(f"Example configuration saved to {example_config_path}")
-        logger.info("Documentation generation completed")
-        
-    except Exception as e:
-        logger.critical(f"Documentation generation failed: {e}", exc_info=True)
-        sys.exit(1)
-
-@app.command()
-def verify_environment():
-    """Verify the environment and dependencies."""
-    try:
-        logger.info("Verifying environment and dependencies")
-        
-        # Check Python version
-        import platform
-        python_version = platform.python_version()
-        logger.info(f"Python version: {python_version}")
-        
-        # Check PyTorch version and CUDA availability
-        import torch
-        torch_version = torch.__version__
-        cuda_available = torch.cuda.is_available()
-        cuda_version = torch.version.cuda if cuda_available else "Not available"
-        
-        logger.info(f"PyTorch version: {torch_version}")
-        logger.info(f"CUDA available: {cuda_available}")
-        logger.info(f"CUDA version: {cuda_version}")
-        
-        # Check other key dependencies - FIXED VERSION
-        dependencies = [
-            ("pandas", "pandas"),
-            ("numpy", "numpy"),
-            ("sklearn", "sklearn"),
-            ("cv2", "cv2"),
-            ("albumentations", "albumentations"),
-            ("segmentation_models_pytorch", "segmentation_models_pytorch"),
-            ("pytorch_lightning", "pytorch_lightning"),
-            ("hydra", "hydra"),
-            ("omegaconf", "omegaconf"),
-            ("typer", "typer"),
-            ("wandb", "wandb")
-        ]
-        
-        for name, module_name in dependencies:
-            try:
-                module = __import__(module_name)
-                version = getattr(module, "__version__", "unknown")
-                logger.info(f"{name} version: {version}")
-            except ImportError:
-                logger.warning(f"{name} is not installed")
-        
-        # Check memory
-        mem = memory_stats()
-        logger.info(f"Memory usage: {mem['rss_mb']:.2f} MB")
-        logger.info(f"Available system memory: {mem['system_available_gb']:.2f} GB")
-        
-        # Check path setup
-        path_manager = get_path_manager()
-        logger.info(f"Base directory: {path_manager.base_dir}")
-        logger.info(f"Data directory: {path_manager.data_dir}")
-        logger.info(f"Output directory: {path_manager.output_dir}")
-        
-        # Check dataset availability
-        dataset_info = path_manager.get_dataset_info()
-        for dataset_name, info in dataset_info.items():
-            status = "Available" if info["exists"] else "Not found"
-            logger.info(f"{dataset_name} dataset: {status}")
-            if info["exists"]:
-                logger.info(f"  - Files: {info['num_files']}")
-                logger.info(f"  - Path: {info['path']}")
-        
-        logger.info("Environment verification completed successfully")
-        
-    except Exception as e:
-        logger.critical(f"Environment verification failed: {e}", exc_info=True)
-        sys.exit(1)
-
-@app.command()
-def clean_cache(
-    force: bool = typer.Option(False, "--force", "-f", help="Force remove without confirmation")
-):
-    """Clean cache files and temporary artifacts."""
-    try:
-        logger.info("Cleaning cache files and temporary artifacts")
-        
-        # Initialize path manager
-        path_manager = get_path_manager()
-        
-        # Define paths to clean
-        cache_paths = [
-            path_manager.output_dir / "cache",
-            path_manager.base_dir / "__pycache__",
-            path_manager.base_dir / ".hydra"
-        ]
-        
-        # Add any run-specific cache directories
-        for run_dir in path_manager.output_dir.glob("run_*"):
-            cache_dir = run_dir / "cache"
-            if cache_dir.exists():
-                cache_paths.append(cache_dir)
-        
-        # Count total cache size
-        total_size = 0
-        for path in cache_paths:
-            if path.exists():
-                if path.is_dir():
-                    for p in path.glob("**/*"):
-                        if p.is_file():
-                            total_size += p.stat().st_size
-                else:
-                    total_size += path.stat().st_size
-        
-        # Convert to MB
-        total_size_mb = total_size / (1024 * 1024)
-        logger.info(f"Found {len(cache_paths)} cache directories with total size: {total_size_mb:.2f} MB")
-        
-        # Get confirmation if not forced
-        if not force:
-            import typer
-            proceed = typer.confirm(f"Remove {len(cache_paths)} cache directories ({total_size_mb:.2f} MB)?")
-            if not proceed:
-                logger.info("Cache cleaning aborted")
-                return
-        
-        # Remove cache directories
-        removed_count = 0
-        for path in cache_paths:
-            if path.exists():
-                if path.is_dir():
-                    import shutil
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-                removed_count += 1
-                logger.info(f"Removed: {path}")
-        
-        logger.info(f"Cleaned {removed_count} cache directories, freed {total_size_mb:.2f} MB")
-        
-    except Exception as e:
-        logger.critical(f"Cache cleaning failed: {e}", exc_info=True)
-        sys.exit(1)
-
+# Entry point for direct execution
 if __name__ == "__main__":
     # Set Hydra environment variables
     os.environ["HYDRA_FULL_ERROR"] = "1"  # Show full error traces
     
-    # Run the Typer app
-    app()
+    # Run the pipeline
+    run_pipeline()

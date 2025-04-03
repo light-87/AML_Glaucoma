@@ -178,42 +178,70 @@ class GlaucomaDataModule(pl.LightningDataModule):
             self.test_df = test_df
     
     def setup(self, stage: Optional[str] = None):
-        """Set up the data splits."""
+        """Set up the data splits with improved stratification."""
         # If using existing splits, just use them directly
         if self.use_existing_splits and self.train_df is not None and self.val_df is not None and self.test_df is not None:
             logger.info("Using existing data splits")
             return
             
-        # Otherwise create splits
+        # Check if 'split' column already exists in the dataframe
         if 'split' in self.data_df.columns:
             # Use existing splits from the dataframe
             self.train_df = self.data_df[self.data_df['split'] == 'train']
             self.val_df = self.data_df[self.data_df['split'] == 'val']
             self.test_df = self.data_df[self.data_df['split'] == 'test']
-        else:
-            # Create splits
-            from sklearn.model_selection import train_test_split
             
-            # Split off test set
-            train_val_df, self.test_df = train_test_split(
-                self.data_df, 
-                test_size=self.test_split,
-                random_state=self.random_state,
-                stratify=self.data_df['label'] if 'label' in self.data_df.columns else None
-            )
-            
-            # Split remaining data into train and val
-            adjusted_val_size = self.val_split / (1 - self.test_split)
-            self.train_df, self.val_df = train_test_split(
-                train_val_df,
-                test_size=adjusted_val_size,
-                random_state=self.random_state,
-                stratify=train_val_df['label'] if 'label' in train_val_df.columns else None
-            )
-    
-        # Log split sizes
-        logger.info(f"Data splits: Train: {len(self.train_df)}, Val: {len(self.val_df)}, Test: {len(self.test_df)}")
-    
+            logger.info(f"Using predefined splits: Train: {len(self.train_df)}, Val: {len(self.val_df)}, Test: {len(self.test_df)}")
+            return
+
+        # If no predefined splits, create stratified splits
+        from sklearn.model_selection import train_test_split
+        
+        # Ensure we have a label column for stratification
+        if 'label' not in self.data_df.columns:
+            # If no label, create a placeholder
+            self.data_df['label'] = 0
+        
+        # Stratify by dataset and label to ensure balanced representation
+        def stratify_key(row):
+            return f"{row['dataset']}_{row['label']}"
+        
+        self.data_df['stratify_key'] = self.data_df.apply(stratify_key, axis=1)
+        
+        # First, split off test set
+        train_val_df, self.test_df = train_test_split(
+            self.data_df, 
+            test_size=self.test_split,
+            random_state=self.random_state,
+            stratify=self.data_df['stratify_key']
+        )
+        
+        # Then split train and validation
+        adjusted_val_size = self.val_split / (1 - self.test_split)
+        self.train_df, self.val_df = train_test_split(
+            train_val_df,
+            test_size=adjusted_val_size,
+            random_state=self.random_state,
+            stratify=train_val_df['stratify_key']
+        )
+        
+        # Remove temporary stratify column
+        self.data_df.drop(columns=['stratify_key'], inplace=True)
+        
+        # Logging detailed split information
+        logger.info("Dataset Split Details:")
+        logger.info(f"Total Samples: {len(self.data_df)}")
+        logger.info(f"Train Samples: {len(self.train_df)} ({len(self.train_df)/len(self.data_df)*100:.2f}%)")
+        logger.info(f"Validation Samples: {len(self.val_df)} ({len(self.val_df)/len(self.data_df)*100:.2f}%)")
+        logger.info(f"Test Samples: {len(self.test_df)} ({len(self.test_df)/len(self.data_df)*100:.2f}%)")
+        
+        # Dataset distribution in each split
+        logger.info("\nDataset Distribution in Splits:")
+        for split_name, split_df in [('Train', self.train_df), ('Validation', self.val_df), ('Test', self.test_df)]:
+            logger.info(f"\n{split_name} Split:")
+            logger.info(split_df['dataset'].value_counts())
+            logger.info("Label Distribution:")
+            logger.info(split_df['label'].value_counts(normalize=True))
     def train_dataloader(self) -> DataLoader:
         """Get the training data loader."""
         if self.use_memory_efficient:

@@ -75,126 +75,91 @@ def load_origa(dataset_path):
     return valid_df
 
 def load_refuge(dataset_path):
-    """Load the REFUGE dataset with more flexible directory structure handling."""
-    dataset_path = Path(dataset_path)
-    splits = ["train", "val", "test"]
+    """Process REFUGE dataset and return a DataFrame"""
+    import os
+    import json
+    import pandas as pd
+    from pathlib import Path
     
-    all_data = []
-    
-    # Function to find image files recursively
-    def find_images(directory):
-        if not directory.exists():
-            return []
+    # Initialize DataFrame
+    columns = [
+        'filename', 'image_path', 'mask_path', 'label', 
+        'dataset', 'split', 'image_width', 'image_height'
+    ]
+    refuge_data = []
+
+    # Process each split (train, val, test)
+    for split in ['train', 'val', 'test']:
+        split_path = Path(dataset_path) / split
         
-        # First check directly in the directory
-        image_files = list(directory.glob("*.jpg")) + list(directory.glob("*.png"))
+        # Look for index.json in the split directory
+        index_path = split_path / 'index.json'
         
-        # If no images found directly, check subdirectories recursively (limit to depth 2)
-        if not image_files:
-            for subdir in directory.iterdir():
-                if subdir.is_dir():
-                    image_files.extend(list(subdir.glob("*.jpg")) + list(subdir.glob("*.png")))
-                    
-                    # Check one level deeper if still nothing
-                    if not image_files:
-                        for subsubdir in subdir.iterdir():
-                            if subsubdir.is_dir():
-                                image_files.extend(list(subsubdir.glob("*.jpg")) + list(subsubdir.glob("*.png")))
-        
-        return image_files
-    
-    # Process each split
-    for split in splits:
-        split_dir = dataset_path / split
-        if not split_dir.exists():
-            logger.warning(f"REFUGE {split} directory not found: {split_dir}")
+        if not index_path.exists():
+            logger.warning(f"No index.json found for {split} split")
             continue
         
-        logger.info(f"Processing REFUGE {split} split")
+        # Read index file
+        with open(index_path, 'r') as f:
+            index_data = json.load(f)
         
-        # Look for images in multiple possible locations
-        image_locations = [
-            split_dir,                 # Directly in split dir
-            split_dir / "Images",      # In Images subdirectory
-            split_dir / "images",      # Case variation
-            split_dir / "Glaucoma",    # Specialized directory
-            split_dir / "Non-Glaucoma" # Specialized directory
-        ]
-        
-        # Find images in all possible locations
-        image_files = []
-        for location in image_locations:
-            image_files.extend(find_images(location))
-        
-        if not image_files:
-            logger.warning(f"No images found in REFUGE {split} split")
-            continue
-        
-        logger.info(f"Found {len(image_files)} images in REFUGE {split} split")
-        
-        # Look for masks in multiple possible locations
-        mask_locations = [
-            split_dir / "Masks", 
-            split_dir / "masks",
-            split_dir / "GT", 
-            split_dir / "gt",
-            split_dir / "Groundtruth",
-            split_dir / "groundtruth",
-            split_dir / "Segmentations",
-            split_dir / "segmentations"
-        ]
-        
-        # Process each image
-        for img_path in image_files:
-            img_name = img_path.stem
+        # Process each image in the split
+        for img_id, img_info in index_data.items():
+            img_filename = img_info.get('ImgName')
             
-            # Determine if it's glaucoma based on directory or filename
-            is_glaucoma = False
-            if "glaucoma" in str(img_path).lower():
-                if "non" not in str(img_path).lower() and "non-" not in str(img_path).lower():
-                    is_glaucoma = True
-            elif "_g_" in img_name.lower() or "glaucoma" in img_name.lower():
-                is_glaucoma = True
+            if not img_filename:
+                logger.warning(f"No image filename found for {img_id}")
+                continue
             
-            # Look for corresponding mask in all possible locations
-            mask_path = None
-            mask_variations = [
-                f"{img_name}.png", 
-                f"{img_name}_mask.png", 
-                f"{img_name}_gt.png",
-                f"{img_name}_segmentation.png",
-                f"{img_name.lower()}.png",
-                f"{img_name.upper()}.png"
+            # Construct image path
+            image_path = split_path / 'Images' / img_filename
+            
+            # Try to find mask
+            mask_candidates = [
+                split_path / 'Masks' / f"{os.path.splitext(img_filename)[0]}.png",
+                split_path / 'Masks' / img_filename,
+                split_path / 'Masks_Square' / f"{os.path.splitext(img_filename)[0]}.png"
             ]
             
-            for mask_location in mask_locations:
-                if mask_location.exists():
-                    for variation in mask_variations:
-                        candidate = mask_location / variation
-                        if candidate.exists():
-                            mask_path = str(candidate)
-                            break
-                    
-                    if mask_path:
-                        break
+            mask_path = None
+            for candidate in mask_candidates:
+                if candidate.exists():
+                    mask_path = str(candidate)
+                    break
             
-            # Add to data list, even without mask (for classification)
-            all_data.append({
-                'filename': img_name,
-                'image_path': str(img_path),
+            # Determine label
+            has_glaucoma = img_info.get('Label', -1)
+            
+            # Try to get image dimensions
+            try:
+                from PIL import Image
+                with Image.open(image_path) as img:
+                    width, height = img.size
+            except Exception as e:
+                logger.warning(f"Could not read image dimensions for {image_path}: {e}")
+                width, height = None, None
+            
+            # Add to dataset
+            refuge_data.append({
+                'filename': img_filename,
+                'image_path': str(image_path),
                 'mask_path': mask_path,
-                'label': 1 if is_glaucoma else 0,
+                'label': 1 if has_glaucoma == 1 else 0 if has_glaucoma == 0 else -1,
                 'dataset': 'REFUGE',
-                'split': split
+                'split': split,
+                'image_width': width,
+                'image_height': height
             })
     
-    # Create dataframe
-    df = pd.DataFrame(all_data)
-    logger.info(f"REFUGE dataset: {len(df)} samples")
+    # Create DataFrame
+    df = pd.DataFrame(refuge_data)
     
-    # Log counts with and without masks
-    with_masks = df['mask_path'].notna().sum()
-    logger.info(f"REFUGE dataset: {with_masks} samples with masks, {len(df) - with_masks} without masks")
+    # Log dataset information
+    logger.info(f"REFUGE dataset: Total samples: {len(df)}")
+    logger.info("Split distribution:")
+    logger.info(df['split'].value_counts())
+    logger.info("Label distribution:")
+    logger.info(df['label'].value_counts())
     
     return df
 

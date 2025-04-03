@@ -217,10 +217,76 @@ def consolidate_datasets(data_dir):
             # Load appropriate dataset
             if dataset == "ORIGA":
                 df = load_origa(dataset_path)
+                # Add random splits for ORIGA if not already present
+                if 'split' not in df.columns:
+                    from sklearn.model_selection import train_test_split
+                    
+                    # Create an 'id' for stratification based on label
+                    if 'label' in df.columns:
+                        df['stratify_key'] = df['label'].astype(str)
+                    else:
+                        df['stratify_key'] = '0'
+                    
+                    # Split into train (70%), val (15%), test (15%)
+                    train_val_df, test_df = train_test_split(
+                        df, test_size=0.15, random_state=42, 
+                        stratify=df['stratify_key'] if 'stratify_key' in df.columns else None
+                    )
+                    
+                    # Further split train/val
+                    train_df, val_df = train_test_split(
+                        train_val_df, test_size=0.18, random_state=42,  # 0.18 * 0.85 ≈ 0.15
+                        stratify=train_val_df['stratify_key'] if 'stratify_key' in train_val_df.columns else None
+                    )
+                    
+                    # Assign splits
+                    df.loc[train_df.index, 'split'] = 'train'
+                    df.loc[val_df.index, 'split'] = 'val'
+                    df.loc[test_df.index, 'split'] = 'test'
+                    
+                    # Clean up
+                    if 'stratify_key' in df.columns:
+                        df.drop(columns=['stratify_key'], inplace=True)
+                    
+                    logger.info(f"Created random splits for ORIGA: Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+                
             elif dataset == "REFUGE":
                 df = load_refuge(dataset_path)
             elif dataset == "G1020":
                 df = load_g1020(dataset_path)
+                
+                # Add random splits for G1020 if not already present
+                if 'split' not in df.columns:
+                    from sklearn.model_selection import train_test_split
+                    
+                    # Create an 'id' for stratification based on label
+                    if 'label' in df.columns:
+                        df['stratify_key'] = df['label'].astype(str)
+                    else:
+                        df['stratify_key'] = '0'
+                    
+                    # Split into train (70%), val (15%), test (15%)
+                    train_val_df, test_df = train_test_split(
+                        df, test_size=0.15, random_state=42, 
+                        stratify=df['stratify_key'] if 'stratify_key' in df.columns else None
+                    )
+                    
+                    # Further split train/val
+                    train_df, val_df = train_test_split(
+                        train_val_df, test_size=0.18, random_state=42,  # 0.18 * 0.85 ≈ 0.15
+                        stratify=train_val_df['stratify_key'] if 'stratify_key' in train_val_df.columns else None
+                    )
+                    
+                    # Assign splits
+                    df.loc[train_df.index, 'split'] = 'train'
+                    df.loc[val_df.index, 'split'] = 'val'
+                    df.loc[test_df.index, 'split'] = 'test'
+                    
+                    # Clean up
+                    if 'stratify_key' in df.columns:
+                        df.drop(columns=['stratify_key'], inplace=True)
+                    
+                    logger.info(f"Created random splits for G1020: Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
                 
             # Add to consolidated dataframe
             if not df.empty:
@@ -237,6 +303,18 @@ def consolidate_datasets(data_dir):
         if 'dataset' in all_data.columns:
             dataset_counts = all_data['dataset'].value_counts().to_dict()
             logger.info(f"Dataset distribution: {dataset_counts}")
+        
+        # Log split distribution
+        if 'split' in all_data.columns:
+            split_counts = all_data['split'].value_counts().to_dict()
+            logger.info(f"Split distribution: {split_counts}")
+            
+            # Log dataset distribution within splits
+            logger.info("Dataset distribution within splits:")
+            for split in ['train', 'val', 'test']:
+                split_data = all_data[all_data['split'] == split]
+                if not split_data.empty and 'dataset' in split_data.columns:
+                    logger.info(f"{split}: {split_data['dataset'].value_counts().to_dict()}")
     
     return all_data
 

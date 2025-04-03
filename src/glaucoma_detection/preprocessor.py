@@ -47,13 +47,15 @@ class GlaucomaDataset(Dataset):
         
         if augment:
             return A.Compose([
-                # Use correct Albumentations transforms
                 A.RandomRotate90(p=0.5),
-                A.HorizontalFlip(p=0.5),  # Replace Flip() with HorizontalFlip()
-                A.VerticalFlip(p=0.5),    # Add VerticalFlip if needed
-                A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=15, p=0.5),
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                # Replace ShiftScaleRotate with Affine
+                A.Affine(scale=(0.9, 1.1), translate_percent=(0.0625, 0.0625), 
+                        rotate=(-15, 15), p=0.5),
                 A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
-                A.GaussNoise(var_limit=(0.0, 0.05), p=0.5),
+                # Fixed GaussNoise parameter (using var_limit instead of var)
+                A.GaussNoise(var_limit=(0.01, 0.05), p=0.5),
                 A.GaussianBlur(blur_limit=(3, 5), p=0.5),
                 A.Normalize(mean=mean, std=std) if mean else A.Normalize(),
                 ToTensorV2()
@@ -70,6 +72,16 @@ class GlaucomaDataset(Dataset):
     
     def _process_mask(self, mask: np.ndarray) -> np.ndarray:
         """Ensure mask is binary (0 or 1)."""
+        # Add debugging
+        if mask is None:
+            print(f"WARNING: Mask is None")
+            return np.zeros((1, *self.target_size), dtype=np.float32)
+            
+        # Print statistics occasionally
+        if np.random.random() < 0.01:  # Sample 1% of masks
+            print(f"Mask stats before processing - Shape: {mask.shape}, Min: {mask.min()}, " 
+                f"Max: {mask.max()}, Unique: {np.unique(mask)}")
+        
         # Normalize to 0-1 range
         if mask.max() > 1:
             mask = mask / 255.0
@@ -176,6 +188,36 @@ class GlaucomaDataModule(pl.LightningDataModule):
             self.train_df = train_df
             self.val_df = val_df
             self.test_df = test_df
+
+    def _create_new_splits(self):
+        """Create new train/val/test splits."""
+        from sklearn.model_selection import train_test_split
+        
+        # Stratify by dataset and label
+        self.data_df['stratify_key'] = self.data_df.apply(
+            lambda row: f"{row.get('dataset', 'unknown')}_{row.get('label', 0)}", axis=1
+        )
+        
+        # First split off test set
+        train_val_df, self.test_df = train_test_split(
+            self.data_df, test_size=self.test_split,
+            random_state=self.random_state,
+            stratify=self.data_df['stratify_key']
+        )
+        
+        # Then split train and validation
+        val_ratio_adjusted = self.val_split / (1 - self.test_split)
+        self.train_df, self.val_df = train_test_split(
+            train_val_df, test_size=val_ratio_adjusted,
+            random_state=self.random_state,
+            stratify=train_val_df['stratify_key']
+        )
+        
+        # Remove temporary column
+        self.data_df.drop(columns=['stratify_key'], inplace=True)
+        
+        logger.info(f"Created new splits: Train: {len(self.train_df)}, " 
+                f"Val: {len(self.val_df)}, Test: {len(self.test_df)}")
     
     def setup(self, stage: Optional[str] = None):
         """Set up the data splits with improved stratification."""
@@ -186,15 +228,31 @@ class GlaucomaDataModule(pl.LightningDataModule):
             
         # Check if 'split' column already exists in the dataframe
         if 'split' in self.data_df.columns:
-            # Use existing splits from the dataframe
-            self.train_df = self.data_df[self.data_df['split'] == 'train']
-            self.val_df = self.data_df[self.data_df['split'] == 'val']
-            self.test_df = self.data_df[self.data_df['split'] == 'test']
+            # Simply use the existing splits
+            self.train_df = self.data_df[self.data_df['split'] == 'train'].copy()
+            self.val_df = self.data_df[self.data_df['split'] == 'val'].copy()
+            self.test_df = self.data_df[self.data_df['split'] == 'test'].copy()
             
             logger.info(f"Using predefined splits: Train: {len(self.train_df)}, Val: {len(self.val_df)}, Test: {len(self.test_df)}")
+            
+            # Log dataset distribution in splits
+            if 'dataset' in self.data_df.columns:
+                logger.info("\nDataset Distribution in Splits:")
+                for split_name, split_df in [('Train', self.train_df), ('Validation', self.val_df), ('Test', self.test_df)]:
+                    if 'dataset' in split_df.columns:
+                        logger.info(f"{split_name} Split Dataset Distribution:")
+                        dataset_counts = split_df['dataset'].value_counts().to_dict()
+                        logger.info(str(dataset_counts))
+                        
+                        # Log label distribution within each dataset in this split
+                        if 'label' in split_df.columns:
+                            logger.info(f"{split_name} Split Label Distribution:")
+                            label_counts = split_df['label'].value_counts().to_dict()
+                            logger.info(str(label_counts))
+            
             return
-
-        # If no predefined splits, create stratified splits
+            
+        # If no predefined splits or we didn't use them, create stratified splits
         from sklearn.model_selection import train_test_split
         
         # Ensure we have a label column for stratification
@@ -204,7 +262,7 @@ class GlaucomaDataModule(pl.LightningDataModule):
         
         # Stratify by dataset and label to ensure balanced representation
         def stratify_key(row):
-            return f"{row['dataset']}_{row['label']}"
+            return f"{row['dataset']}_{row['label']}" if 'dataset' in row else str(row['label'])
         
         self.data_df['stratify_key'] = self.data_df.apply(stratify_key, axis=1)
         
@@ -239,37 +297,27 @@ class GlaucomaDataModule(pl.LightningDataModule):
         logger.info("\nDataset Distribution in Splits:")
         for split_name, split_df in [('Train', self.train_df), ('Validation', self.val_df), ('Test', self.test_df)]:
             logger.info(f"\n{split_name} Split:")
-            logger.info(split_df['dataset'].value_counts())
+            if 'dataset' in split_df.columns:
+                logger.info(split_df['dataset'].value_counts())
             logger.info("Label Distribution:")
             logger.info(split_df['label'].value_counts(normalize=True))
+
     def train_dataloader(self) -> DataLoader:
         """Get the training data loader."""
-        if self.use_memory_efficient:
-            from glaucoma_detection.memory_efficient_loader import create_memory_efficient_data_loader
-            return create_memory_efficient_data_loader(
-                data=self.train_df,
-                batch_size=self.batch_size,
-                num_workers=self.num_workers,
-                target_size=self.target_size,
-                augment=self.augment_train,
-                mode=self.mode,
-                shuffle=True,
-                cache_dir=self.cache_dir
-            )
-        else:
-            dataset = GlaucomaDataset(
-                data=self.train_df,
-                target_size=self.target_size,
-                augment=self.augment_train,
-                mode=self.mode
-            )
-            return DataLoader(
-                dataset=dataset,
-                batch_size=self.batch_size,
-                shuffle=True,
-                num_workers=self.num_workers,
-                pin_memory=True
-            )
+        dataset = GlaucomaDataset(
+            data=self.train_df,
+            target_size=self.target_size,
+            augment=self.augment_train,
+            mode=self.mode
+        )
+        return DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True if self.num_workers > 0 else False  # Add this line
+        )
     
     def val_dataloader(self) -> DataLoader:
         """Get the validation data loader."""

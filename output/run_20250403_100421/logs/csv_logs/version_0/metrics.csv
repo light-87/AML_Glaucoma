@@ -1,0 +1,6 @@
+epoch,lr-Adam,step,test_accuracy,test_dice,test_iou,test_loss,test_mse,train_accuracy_epoch,train_accuracy_step,train_dice_epoch,train_dice_step,train_iou_epoch,train_iou_step,train_loss_epoch,train_loss_step,train_mse_epoch,train_mse_step,val_accuracy,val_dice,val_iou,val_loss,val_mse
+,0.001,0,,,,,,,,,,,,,,,,,,,,
+0,,9,,,,,,,0.9397919178009033,,0.0,,0.0,,0.9383072853088379,,0.20353850722312927,,,,,
+0,,12,,,,,,,,,,,,,,,,0.9982783794403076,0.0,0.0,0.9184408783912659,0.16823919117450714
+0,,12,,,,,,0.7650255560874939,,0.0,,0.0,,0.9744555950164795,,0.2694392502307892,,,,,,
+1,,13,0.998026430606842,0.0,0.0,0.9184032678604126,0.16819362342357635,,,,,,,,,,,,,,,

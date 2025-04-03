@@ -313,3 +313,71 @@ class SegmentationEvaluator:
             f.write("=================\n\n")
             for key, value in results.items():
                 f.write(f"{key}: {value:.4f}\n")
+            
+# Add to evaluator.py or trainer.py
+def debug_predictions(images, masks, predictions, save_dir):
+    os.makedirs(save_dir, exist_ok=True)
+    for i in range(min(5, len(images))):
+        # Convert tensors to numpy
+        img = images[i].cpu().numpy().transpose(1, 2, 0)
+        mask = masks[i].cpu().numpy()[0]
+        pred = predictions[i].cpu().numpy()[0]
+        
+        # Plot
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].imshow(img)
+        axes[0].set_title('Image')
+        axes[1].imshow(mask, cmap='gray')
+        axes[1].set_title(f'Ground Truth (unique: {np.unique(mask)})')
+        axes[2].imshow(pred, cmap='gray')
+        axes[2].set_title(f'Prediction (unique: {np.unique(pred)})')
+        
+        plt.savefig(os.path.join(save_dir, f'debug_sample_{i}.png'))
+        plt.close()
+
+# In evaluator.py
+def visualize_predictions(self, images, masks, preds, save_dir, num_samples=10):
+    """Generate visualizations of predictions vs ground truth."""
+    os.makedirs(save_dir, exist_ok=True)
+    
+    indices = np.random.choice(len(images), min(num_samples, len(images)), replace=False)
+    
+    for i, idx in enumerate(indices):
+        image = images[idx].cpu().numpy().transpose(1, 2, 0)
+        mask = masks[idx].cpu().numpy()[0]
+        pred = (preds[idx] > 0.5).float().cpu().numpy()[0]
+        
+        # Normalize image for display
+        image = (image - image.min()) / (image.max() - image.min())
+        
+        # Create overlay
+        overlay = np.zeros_like(image)
+        overlay[:,:,0] = pred * 0.7  # Red channel - prediction
+        overlay[:,:,1] = mask * 0.7  # Green channel - ground truth
+        
+        # Final image with transparency
+        result = image * 0.7 + overlay * 0.3
+        
+        plt.figure(figsize=(12, 4))
+        plt.subplot(1, 4, 1)
+        plt.imshow(image)
+        plt.title('Original')
+        plt.axis('off')
+        
+        plt.subplot(1, 4, 2)
+        plt.imshow(mask, cmap='gray')
+        plt.title('Ground Truth')
+        plt.axis('off')
+        
+        plt.subplot(1, 4, 3)
+        plt.imshow(pred, cmap='gray')
+        plt.title('Prediction')
+        plt.axis('off')
+        
+        plt.subplot(1, 4, 4)
+        plt.imshow(result)
+        plt.title('Overlay')
+        plt.axis('off')
+        
+        plt.savefig(os.path.join(save_dir, f'result_{idx}.png'), dpi=150, bbox_inches='tight')
+        plt.close()

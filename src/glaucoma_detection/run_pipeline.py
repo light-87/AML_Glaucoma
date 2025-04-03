@@ -30,6 +30,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
+# Add at the beginning of the file
+import torch
+torch.set_float32_matmul_precision('medium')
+
 # IMPORTANT: Use the correct relative path to your config directory
 # Assuming conf is in the project root directory: AML_Glaucoma/conf
 @hydra.main(config_path="../../conf", config_name="config", version_base=None)

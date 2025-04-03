@@ -21,20 +21,36 @@ from torchmetrics.regression import MeanSquaredError
 
 logger = logging.getLogger(__name__)
 
+import warnings
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", message="ShiftScaleRotate is a special case of Affine transform")
+warnings.filterwarnings("ignore", message="Consider setting `persistent_workers=True`")
+warnings.filterwarnings("ignore", message="The verbose parameter is deprecated")
+
 # Custom Combined Loss Class
 class CombinedLoss(nn.Module):
-    """Combined loss function that adds Dice and BCE losses."""
-    
     def __init__(self, mode='binary'):
-        """Initialize with the specified mode."""
         super().__init__()
         self.dice_loss = smp.losses.DiceLoss(mode=mode)
         self.bce_loss = nn.BCEWithLogitsLoss()
     
     def forward(self, y_pred, y_true):
-        """Compute the combined loss."""
+        # Check if predictions contain any non-zero values
+        if torch.sum(y_pred > 0.5) == 0 and torch.rand(1).item() < 0.1:
+            print("WARNING: All predictions are below threshold")
+        
+        # Ensure inputs have correct dimensions
+        if y_pred.dim() == 4 and y_pred.size(1) == 1:
+            # Reshape for BCE loss which expects [B, C]
+            y_pred_bce = y_pred.squeeze(1)
+            y_true_bce = y_true.squeeze(1)
+        else:
+            y_pred_bce = y_pred
+            y_true_bce = y_true
+            
         dice = self.dice_loss(y_pred, y_true)
-        bce = self.bce_loss(y_pred, y_true)
+        bce = self.bce_loss(y_pred_bce, y_true_bce)
         return dice + bce
 
 class GlaucomaSegmentationModel(pl.LightningModule):
@@ -109,13 +125,13 @@ class GlaucomaSegmentationModel(pl.LightningModule):
         # Configure scheduler if enabled
         if self.config.get('lr_scheduler', {}).get('enabled', False):
             scheduler_config = self.config.get('lr_scheduler', {})
+            # Remove verbose=True
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode='min',
                 factor=scheduler_config.get('factor', 0.1),
                 patience=scheduler_config.get('patience', 5),
-                min_lr=scheduler_config.get('min_lr', 1e-6),
-                verbose=True
+                min_lr=scheduler_config.get('min_lr', 1e-6)
             )
             
             return {

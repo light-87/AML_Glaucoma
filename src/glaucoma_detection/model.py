@@ -31,7 +31,7 @@ def create_model(model_config: Dict[str, Any]) -> nn.Module:
             encoder_weights=encoder_weights,
             in_channels=in_channels,
             classes=classes,
-            activation='sigmoid' if classes == 1 else 'softmax'
+            activation=None  # IMPORTANT FIX: Remove activation to use raw logits
         )
     elif architecture.lower() == 'unet++':
         model = smp.UnetPlusPlus(
@@ -39,7 +39,7 @@ def create_model(model_config: Dict[str, Any]) -> nn.Module:
             encoder_weights=encoder_weights,
             in_channels=in_channels,
             classes=classes,
-            activation='sigmoid' if classes == 1 else 'softmax'
+            activation=None  # IMPORTANT FIX: Remove activation to use raw logits
         )
     elif architecture.lower() == 'deeplabv3':
         model = smp.DeepLabV3(
@@ -47,7 +47,7 @@ def create_model(model_config: Dict[str, Any]) -> nn.Module:
             encoder_weights=encoder_weights,
             in_channels=in_channels,
             classes=classes,
-            activation='sigmoid' if classes == 1 else 'softmax'
+            activation=None  # IMPORTANT FIX: Remove activation to use raw logits
         )
     elif architecture.lower() == 'fpn':
         model = smp.FPN(
@@ -55,7 +55,7 @@ def create_model(model_config: Dict[str, Any]) -> nn.Module:
             encoder_weights=encoder_weights,
             in_channels=in_channels,
             classes=classes,
-            activation='sigmoid' if classes == 1 else 'softmax'
+            activation=None  # IMPORTANT FIX: Remove activation to use raw logits
         )
     else:
         logger.warning(f"Unknown architecture: {architecture}. Defaulting to UNet.")
@@ -64,7 +64,7 @@ def create_model(model_config: Dict[str, Any]) -> nn.Module:
             encoder_weights='imagenet',
             in_channels=in_channels,
             classes=classes,
-            activation='sigmoid' if classes == 1 else 'softmax'
+            activation=None  # IMPORTANT FIX: Remove activation to use raw logits
         )
     
     return model

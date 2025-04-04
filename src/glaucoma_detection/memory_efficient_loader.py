@@ -320,14 +320,7 @@ class MemoryEfficientDataset(Dataset):
             return np.zeros((self.target_size[1], self.target_size[0], 3), dtype=np.uint8)
     
     def _load_and_preprocess_mask(self, mask_path: str) -> np.ndarray:
-        """Load and preprocess a mask.
-        
-        Args:
-            mask_path: Path to the mask file
-            
-        Returns:
-            Preprocessed mask as numpy array
-        """
+        """Load and preprocess a mask."""
         try:
             # Load mask efficiently with OpenCV (grayscale)
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
@@ -341,8 +334,9 @@ class MemoryEfficientDataset(Dataset):
             if mask.max() > 1:
                 mask = mask / 255.0
                 
-            # Ensure mask is binary (this is the key fix)
-            mask = (mask > 0.5).astype(np.float32)
+            # IMPORTANT FIX: Use > 0 instead of > 0.5
+            # This ensures that any positive value (1 or 2) becomes a 1 in the binary mask
+            mask = (mask > 0).astype(np.float32)
             
             # Resize efficiently
             mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
@@ -355,7 +349,6 @@ class MemoryEfficientDataset(Dataset):
             logger.error(f"Error loading mask {mask_path}: {str(e)}", exc_info=True)
             # Return a blank mask in case of error
             return np.zeros((1, self.target_size[1], self.target_size[0]), dtype=np.float32)
-    
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get a sample from the dataset.
         

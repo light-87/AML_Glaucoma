@@ -72,12 +72,11 @@ class GlaucomaDataset(Dataset):
     
     def _process_mask(self, mask: np.ndarray) -> np.ndarray:
         """Ensure mask is binary (0 or 1)."""
-        # Add debugging
         if mask is None:
             print(f"WARNING: Mask is None")
             return np.zeros((1, *self.target_size), dtype=np.float32)
             
-        # Print statistics occasionally
+        # Print statistics occasionally for debugging
         if np.random.random() < 0.01:  # Sample 1% of masks
             print(f"Mask stats before processing - Shape: {mask.shape}, Min: {mask.min()}, " 
                 f"Max: {mask.max()}, Unique: {np.unique(mask)}")
@@ -86,8 +85,9 @@ class GlaucomaDataset(Dataset):
         if mask.max() > 1:
             mask = mask / 255.0
         
-        # Threshold to create binary mask
-        mask = (mask > 0.5).astype(np.float32)
+        # Threshold to create binary mask - IMPORTANT FIX: use > 0 instead of > 0.5
+        # This ensures that any positive value (1 or 2) becomes a 1 in the binary mask
+        mask = (mask > 0).astype(np.float32)
         
         return mask
     

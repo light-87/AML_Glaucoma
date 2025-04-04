@@ -1,0 +1,115 @@
+data:
+  zip_file: null
+  random_state: 42
+  datasets:
+    ORIGA:
+      path: ${paths.data_dir}/ORIGA
+      metadata_file: OrigaList.csv
+      image_dir: Images
+      mask_dir: Masks
+    REFUGE:
+      path: ${paths.data_dir}/REFUGE
+      splits:
+      - train
+      - val
+      - test
+      metadata_file: index.json
+      image_dir: Images
+      mask_dir: Masks
+    G1020:
+      path: ${paths.data_dir}/G1020
+      metadata_file: G1020.csv
+      image_dir: Images
+      mask_dir: Masks
+  split_config:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+model:
+  architecture: unet
+  encoder: resnet18
+  pretrained: true
+  in_channels: 3
+  num_classes: 1
+preprocessing:
+  image_size:
+  - 224
+  - 224
+  image_channels: 3
+  normalization: imagenet
+  use_square_images: true
+  use_cropped_images: true
+  mode: segmentation
+  augmentation:
+    enabled: true
+    rotation_range: 15
+    width_shift_range: 0.1
+    height_shift_range: 0.1
+    shear_range: 0.1
+    zoom_range: 0.1
+    horizontal_flip: true
+    vertical_flip: false
+    fill_mode: nearest
+training:
+  epochs: 2
+  batch_size: 8
+  num_workers: 4
+  learning_rate: 0.001
+  optimizer: adam
+  loss_function: combined
+  precision: 32-true
+  use_gpu: true
+  gpu_ids:
+  - 0
+  gradient_clip_val: 0.0
+  accumulate_grad_batches: 4
+  lr_scheduler:
+    enabled: true
+    factor: 0.1
+    patience: 5
+    min_lr: 1.0e-06
+    monitor: val_loss
+  early_stopping:
+    enabled: true
+    patience: 10
+    monitor: val_loss
+    min_delta: 0.001
+    mode: min
+  checkpointing:
+    enabled: true
+    save_top_k: 3
+    monitor: val_loss
+    mode: min
+  use_class_weights: true
+evaluation:
+  metrics:
+  - dice
+  - iou
+  - accuracy
+  - precision
+  - recall
+  - f1
+  threshold: 0.5
+  num_samples: 5
+  visualization:
+    enabled: true
+    plot_wrong_predictions: true
+    plot_gradcam: true
+logging:
+  use_wandb: false
+  wandb_project: glaucoma-detection
+  log_every_n_steps: 10
+paths:
+  base_dir: ${oc.env:BASE_DIR,${hydra:runtime.cwd}}
+  data_dir: ${oc.env:DATA_DIR,${paths.base_dir}/data}
+  output_dir: ${oc.env:OUTPUT_DIR,${paths.base_dir}/output}
+  model_dir: ${paths.output_dir}/models
+  log_dir: ${paths.output_dir}/logs
+pipeline:
+  steps:
+  - load
+  - clean
+  - preprocess
+  - train
+  force: false
+  description: Default pipeline run

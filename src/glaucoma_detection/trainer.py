@@ -28,31 +28,38 @@ warnings.filterwarnings("ignore", message="ShiftScaleRotate is a special case of
 warnings.filterwarnings("ignore", message="Consider setting `persistent_workers=True`")
 warnings.filterwarnings("ignore", message="The verbose parameter is deprecated")
 
-# Custom Combined Loss Class
 class CombinedLoss(nn.Module):
+    """Custom combined loss function for binary segmentation."""
+    
     def __init__(self, mode='binary'):
         super().__init__()
         self.dice_loss = smp.losses.DiceLoss(mode=mode)
         self.bce_loss = nn.BCEWithLogitsLoss()
     
     def forward(self, y_pred, y_true):
-        # Check if predictions contain any non-zero values
-        if torch.sum(y_pred > 0.5) == 0 and torch.rand(1).item() < 0.1:
-            print("WARNING: All predictions are below threshold")
+        # Ensure inputs have proper shape for both losses
         
-        # Ensure inputs have correct dimensions
+        # Ensure ground truth is binary
+        y_true_binary = (y_true > 0).float()
+        
+        # Apply Dice loss
+        dice = self.dice_loss(y_pred, y_true_binary)
+        
+        # Prepare inputs for BCE loss which may need different shapes
         if y_pred.dim() == 4 and y_pred.size(1) == 1:
-            # Reshape for BCE loss which expects [B, C]
+            # Reshape for BCE loss which expects [B, H, W] for binary case
             y_pred_bce = y_pred.squeeze(1)
-            y_true_bce = y_true.squeeze(1)
+            y_true_bce = y_true_binary.squeeze(1)
         else:
             y_pred_bce = y_pred
-            y_true_bce = y_true
+            y_true_bce = y_true_binary
             
-        dice = self.dice_loss(y_pred, y_true)
+        # Apply BCE loss
         bce = self.bce_loss(y_pred_bce, y_true_bce)
-        return dice + bce
-
+        
+        # Return weighted sum - give more weight to Dice loss
+        return 1.0 * dice + 0.8 * bce
+    
 class GlaucomaSegmentationModel(pl.LightningModule):
     """PyTorch Lightning module for glaucoma segmentation."""
     
@@ -91,7 +98,6 @@ class GlaucomaSegmentationModel(pl.LightningModule):
         else:
             logger.warning(f"Unknown loss function: {loss_type}. Using combined loss.")
             return CombinedLoss(mode='binary')
-    
     def _get_metrics(self):
         """Get metrics for evaluation."""
         metrics = torchmetrics.MetricCollection({

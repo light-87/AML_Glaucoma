@@ -125,3 +125,25 @@ def load_model(
     except Exception as e:
         logger.error(f"Error loading model: {e}")
         return None, None
+    
+def log_model_to_wandb(model, input_size=(3, 224, 224)):
+    """Log model architecture to W&B."""
+    if wandb.run is None:
+        return
+    
+    # Generate random input
+    device = next(model.parameters()).device
+    dummy_input = torch.randn(1, *input_size, device=device)
+    
+    # Log model graph
+    wandb.watch(model, log="all", log_freq=100)
+    
+    # Log model summary
+    model_summary = str(model)
+    wandb.run.summary["model_summary"] = model_summary
+    
+    # Log number of parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    wandb.run.summary["total_parameters"] = total_params
+    wandb.run.summary["trainable_parameters"] = trainable_params

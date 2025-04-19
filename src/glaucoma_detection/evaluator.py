@@ -286,14 +286,21 @@ class SegmentationEvaluator:
         
         # Log to wandb
         wandb.log({
-            "sample_predictions": wandb_images,
-            "roc_curve": wandb.plot.roc_curve(
-                y_true=targets.flatten().numpy(),
-                y_probas=predictions.flatten().numpy()
-            ),
-            "pr_curve": wandb.plot.pr_curve(
+            "conf_matrix": wandb.plot.confusion_matrix(
+                probs=None,
                 y_true=targets.flatten().numpy(), 
-                y_probas=predictions.flatten().numpy()
+                preds=predictions.flatten().round().numpy(),
+                class_names=["background", "glaucoma"]
+            )
+        })
+
+        # Log precision-recall curve
+        wandb.log({
+            "pr_curve": wandb.plot.pr_curve(
+                y_true=targets.flatten().numpy(),
+                y_probas=predictions.flatten().numpy(),
+                labels=["glaucoma"],
+                classes_to_plot=[1]
             )
         })
     
@@ -381,3 +388,57 @@ def visualize_predictions(self, images, masks, preds, save_dir, num_samples=10):
         
         plt.savefig(os.path.join(save_dir, f'result_{idx}.png'), dpi=150, bbox_inches='tight')
         plt.close()
+
+def create_overlay_visualization(image, pred, target):
+    """Create overlay visualization for wandb."""
+    # Denormalize image
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    img = image * std + mean
+    img = np.clip(img, 0, 1)
+    
+    # Create RGB masks
+    overlay = img.copy()
+    overlay[pred > 0.5, 0] += 0.5  # Red for prediction
+    overlay[target > 0.5, 1] += 0.5  # Green for ground truth
+    overlay = np.clip(overlay, 0, 1)
+    
+    return (overlay * 255).astype(np.uint8)
+
+def _log_detailed_metrics_to_wandb(self, results, all_preds, all_targets, all_images, indices=None):
+    """Log detailed per-sample metrics to wandb."""
+    if wandb.run is None:
+        return
+    
+    if indices is None:
+        indices = np.random.choice(len(all_images), min(20, len(all_images)), replace=False)
+    
+    # Create a table with detailed metrics
+    columns = ["image_idx", "dice", "iou", "accuracy", "image", "ground_truth", "prediction"]
+    table_data = []
+    
+    for idx in indices:
+        # Calculate metrics for this sample
+        pred = all_preds[idx:idx+1]
+        target = all_targets[idx:idx+1]
+        image = all_images[idx]
+        
+        # For each sample, calculate individual metrics
+        sample_dice = dice_coefficient(pred, target).item()
+        sample_iou = jaccard_index(pred, target).item()
+        sample_acc = binary_accuracy(pred, target).item()
+        
+        # Add to table
+        table_data.append([
+            idx,
+            sample_dice,
+            sample_iou,
+            sample_acc,
+            wandb.Image(image.numpy().transpose(1, 2, 0)),
+            wandb.Image(target[0].numpy()),
+            wandb.Image(pred[0].numpy())
+        ])
+    
+    # Log the table
+    table = wandb.Table(data=table_data, columns=columns)
+    wandb.log({"detailed_metrics": table})

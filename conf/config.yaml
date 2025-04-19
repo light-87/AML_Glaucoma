@@ -21,3 +21,7 @@ pipeline:
   steps: [extract, load, clean, preprocess, train, evaluate]
   force: false
   description: "Default pipeline run"
+
+experiment_group: "initial_training"
+experiment_name: "${model.architecture}_${model.encoder}"
+experiment_tags: ["glaucoma", "${model.architecture}", "${model.encoder}"]

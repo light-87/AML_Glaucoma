@@ -9,6 +9,7 @@ import logging
 import datetime
 import pandas as pd
 import torch
+import json
 from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -22,6 +23,7 @@ from glaucoma_detection.preprocessor import GlaucomaDataModule
 from glaucoma_detection.model import create_model, save_model
 from glaucoma_detection.trainer import train_model
 from glaucoma_detection.evaluator import SegmentationEvaluator
+from glaucoma_detection.visualize import VisualizationManager
 
 # Set up logging
 logging.basicConfig(
@@ -205,8 +207,12 @@ def run_pipeline(cfg: DictConfig):
             import wandb
             wandb.init(
                 project=cfg.logging.wandb_project,
+                entity=cfg.logging.get('wandb_entity', None),
                 name=f"run_{run_timestamp}",
-                config=OmegaConf.to_container(cfg, resolve=True)
+                config=OmegaConf.to_container(cfg, resolve=True),
+                tags=[cfg.model.architecture, cfg.model.encoder, f"bs{cfg.training.batch_size}"],
+                group=cfg.get("experiment_group", "default"),
+                job_type=cfg.pipeline.get("description", "training"),
             )
         
         # Create model
@@ -263,6 +269,31 @@ def run_pipeline(cfg: DictConfig):
         results = evaluator.evaluate(test_loader=test_loader, device=device)
         
         logger.info(f"Evaluation results: {results}")
+        # Visualization of results
+        # Save metrics to JSON
+        metrics_path = eval_dir / "metrics.json"
+        with open(metrics_path, 'w') as f:
+            json.dump(results, f, indent=4)
+        
+        # Optionally, get training history from CSV logger
+        csv_logger_path = run_dir / "logs" / "csv_logs" / "version_0" / "metrics.csv"
+        
+        # Generate visualizations
+        try:
+            visualizations = VisualizationManager(
+                output_dir=str(eval_dir),
+                config=OmegaConf.to_container(cfg, resolve=True),
+                metrics_file=str(metrics_path),
+                training_history_file=str(csv_logger_path),
+                # Optional: sample prediction images if you want to include them
+                sample_images=None  # You might need to implement this part
+            )
+            
+            # Log visualization paths
+            for viz_name, viz_path in visualizations.items():
+                logger.info(f"Generated {viz_name}: {viz_path}")
+        except Exception as e:
+            logger.error(f"Error generating visualizations: {e}")
     
     # Calculate run time
     end_time = datetime.datetime.now()

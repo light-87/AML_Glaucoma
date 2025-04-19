@@ -55,7 +55,7 @@ class GlaucomaDataset(Dataset):
                         rotate=(-15, 15), p=0.5),
                 A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
                 # Fixed GaussNoise parameter (using var_limit instead of var)
-                A.GaussNoise(var_limit=(0.01, 0.05), p=0.5),
+                # A.GaussNoise(var_limit=(0.01, 0.05), p=0.5),
                 A.GaussianBlur(blur_limit=(3, 5), p=0.5),
                 A.Normalize(mean=mean, std=std) if mean else A.Normalize(),
                 ToTensorV2()
@@ -77,9 +77,9 @@ class GlaucomaDataset(Dataset):
             return np.zeros((1, *self.target_size), dtype=np.float32)
             
         # Print statistics occasionally for debugging
-        if np.random.random() < 0.01:  # Sample 1% of masks
-            print(f"Mask stats before processing - Shape: {mask.shape}, Min: {mask.min()}, " 
-                f"Max: {mask.max()}, Unique: {np.unique(mask)}")
+        # if np.random.random() < 0.01:  # Sample 1% of masks
+            # print(f"Mask stats before processing - Shape: {mask.shape}, Min: {mask.min()}, " 
+                # f"Max: {mask.max()}, Unique: {np.unique(mask)}")
         
         # Normalize to 0-1 range
         if mask.max() > 1:
@@ -134,8 +134,8 @@ class GlaucomaDataset(Dataset):
                 image = transformed["image"]
                 mask = transformed["mask"].unsqueeze(0)  # Add channel dimension back
                 
-                # Ensure binary mask after transforms
-                mask = (mask > 0.5).float()
+                # IMPORTANT FIX: Ensure mask remains binary after transforms
+                mask = (mask > 0).float()
             else:
                 transformed = self.transforms(image=image)
                 image = transformed["image"]
